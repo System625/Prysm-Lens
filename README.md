@@ -70,9 +70,23 @@ The hackathon only counts work built during the event. Here is the split:
 | Muse Spark verification step | |
 | Voice step | |
 | The benchmark harness and results | |
+| The web demo | |
 | The hook that lets Prysm call Lens | |
 
 Prysm's backend stays private. Everything Lens adds, including the code that connects it to Prysm, is in this repo.
+
+## Repo layout
+
+```
+Prysm-Lens/
+  indexer/       Python, run locally: fingerprints game screenshots into the index
+  service/       Modal app: the search API, plus the SAM 3.1 and Muse Spark calls
+  web/           Next.js demo site (Vercel): paste a link, upload a clip, or use your camera
+  benchmark/     clip links + labels, the scoring script, results
+  integrations/  the call Prysm's share pipeline makes to Lens
+```
+
+The web demo shows every stage, not only the answer: the frames it pulled out, the frames after SAM 3.1 masks the overlays, the top candidates with their matching screenshots, and Muse Spark's pick with its reasoning. On a phone, the camera mode lets you point it at a TV.
 
 ## Status
 
@@ -83,6 +97,7 @@ Prysm's backend stays private. Everything Lens adds, including the code that con
 - [ ] SAM 3.1 cleaning
 - [ ] Full pipeline vs baseline, on all clips and on the hard subset
 - [ ] Search service deployed
+- [ ] Web demo live
 - [ ] Prysm integration and demo
 
 ## Team
