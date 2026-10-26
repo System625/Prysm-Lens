@@ -1,0 +1,92 @@
+# Prysm Lens
+
+**Name the game in any gameplay clip, from the pixels alone.**
+
+Prysm Lens is a "Shazam for games". Give it a short gameplay video, such as a TikTok, a Reel or a YouTube Short, and it tells you which game it is and shows the evidence. It does not need the caption to name the game.
+
+It is built for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/meta-ai-developer-hackathon) (26 Oct – 4 Nov 2026), Indie track, problem statement **Build for Your World**.
+
+---
+
+## The problem
+
+[Prysm](https://www.prysmblast.com) is our game-tracking app. Players share gaming clips into it, and it adds the game to their shelf. Today it works out the game mostly from the **text** around a clip: the caption, the hashtags, the title.
+
+That works when the poster names the game. It fails when they don't, and those clips are the ones where people most want to know "what game is this?". The clips that defeat it are:
+
+- **YouTube titles that say nothing about the game**, such as "Cherry blossom", "Delete" or "Spin It!" on Brawlhalla clips
+- **indie horror** captioned "Scary Game" or "Stream"
+- **new and long-tail releases** that language models don't know yet
+- **sequels and remasters** that look like their predecessors, such as Modern Warfare 4 vs Modern Warfare (2019), or *Silent Hill: Townfall* vs the original
+
+A language model guessing from memory can't fix this; it confidently names the wrong game. Prysm Lens looks at the video itself.
+
+## How it works
+
+Lens finds candidates first, then checks them.
+
+```
+clip ──► frames ──► SAM 3.1 ──► Perception Encoder ──► index search ──► Muse Spark ──► answer + evidence
+                    (mask       (fingerprint the       (top 10 games     (watches the clip
+                    facecams,    cleaned frames)        from ~450k        next to each
+                    subtitles,                          game screenshots) candidate's screenshots
+                    overlays)                                             and picks one, or none)
+```
+
+1. **Index.** Fingerprint every game's screenshots with Meta's **Perception Encoder** (PE-Core-L14-336, Apache 2.0). It does not depend on what a model happens to remember, so a game released last week is covered as soon as it has screenshots.
+2. **Clean.** Streamers' facecams, subtitles and on-screen UI overlays get in the way of the gameplay. **SAM 3.1** masks them out of the frames before they are fingerprinted.
+3. **Find candidates.** A nearest-neighbour search returns the top 10 games.
+4. **Check.** **Muse Spark** watches the clip alongside each candidate's screenshots and picks the right game, citing what it saw. It can also decide that none of them match.
+5. **Listen.** **Muse Voice Transcribe**, biased toward the candidate titles, catches a streamer saying the game's name out loud.
+6. **Learn.** Every clip a user confirms adds its frames to the index.
+
+### Meta models used
+
+| Model | Role |
+|---|---|
+| Perception Encoder (open weights) | Visual fingerprint for screenshots and clip frames |
+| SAM 3.1 | Masks facecams, subtitles and overlays out of clip frames |
+| Muse Spark 1.3 | Watches the clip next to the candidates and picks one, with evidence |
+| Muse Voice Transcribe | Catches spoken game names, with keyword biasing |
+| Muse Glimmer (to be tested) | Its vision encoder as an alternative fingerprinter |
+
+## Benchmark
+
+There is no public benchmark for naming a video game from a clip. The closest we found is a 2023 paper that classifies 10 games. So we are building one from real clips people shared into Prysm. Each clip is labelled by hand, and no game contributes more than 3 clips.
+
+**Baseline, measured before the hackathon on Prysm's existing text-based pipeline:** 62 of 75 clips right on the first guess, **83%**. The misses are almost all the clips described above, where the caption doesn't name the game. That "hard subset" is what Lens is for, and we will report every result on it separately.
+
+We will publish the **clip links and labels only**. The videos belong to their creators and are not redistributed here.
+
+## What is new in this repo
+
+The hackathon only counts work built during the event. Here is the split:
+
+| Built during the hackathon (this repo) | Existed before |
+|---|---|
+| Screenshot index and the indexing pipeline | The Prysm app (iOS / Android) |
+| SAM 3.1 frame cleaning | Prysm's text-based share pipeline (the 83% baseline) |
+| Search service | The game catalog Lens indexes against |
+| Muse Spark verification step | |
+| Voice step | |
+| The benchmark harness and results | |
+| The hook that lets Prysm call Lens | |
+
+Prysm's backend stays private. Everything Lens adds, including the code that connects it to Prysm, is in this repo.
+
+## Status
+
+- [x] Benchmark clips collected and hand-labelled
+- [x] Baseline measured on the existing pipeline (83%)
+- [ ] Muse Spark on the video alone (no index), same clips
+- [ ] Perception Encoder index plus a recall@10 check
+- [ ] SAM 3.1 cleaning
+- [ ] Full pipeline vs baseline, on all clips and on the hard subset
+- [ ] Search service deployed
+- [ ] Prysm integration and demo
+
+## Team
+
+- **Tunde-Ajayi Olamiposi:** recognition engine, backend, benchmark
+- **Sola:** app result screen and the "point your camera at a TV" mode
+- **Josh:** Lens in the Prysm Chrome extension, deployment
