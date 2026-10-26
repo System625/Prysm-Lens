@@ -102,6 +102,6 @@ The web demo shows every stage, not only the answer: the frames it pulled out, t
 
 ## Team
 
-- **Tunde-Ajayi Olamiposi:** recognition engine, backend, benchmark
-- **Sola:** app result screen and the "point your camera at a TV" mode
-- **Josh:** Lens in the Prysm Chrome extension, deployment
+Lens is built by **Tunde-Ajayi Olamiposi**: the recognition pipeline, the search service, the web demo, the benchmark and the Prysm integration.
+
+The Prysm app it plugs into is the existing work of the wider Prysm team.
