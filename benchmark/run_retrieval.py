@@ -54,10 +54,23 @@ def main(tsv: str, baseline: str, index_base: str, out: str) -> None:
     with open(out, "w") as f:
         for rec in results:
             f.write(json.dumps(rec) + "\n")
-    for name, rs in (("all", results), ("hard (pipeline missed)", [x for x in results if x["hard"]])):
-        if rs:
-            at = lambda k: sum(1 for x in rs if x["hit_rank"] and x["hit_rank"] <= k)
-            print(f"{name}: n={len(rs)}  R@1 {at(1)}/{len(rs)}  R@5 {at(5)}/{len(rs)}  R@10 {at(10)}/{len(rs)}")
+    summarise(results)
+
+def summarise(results: list[dict], cap: int = 3) -> None:
+    """Recall overall and on the hard rows, uncapped and with at most `cap` clips per truth (first rows win).
+    `prysm@1` is the current pipeline's top-1 on the same clips."""
+    seen: dict[str, int] = {}
+    capped = []
+    for x in results:
+        seen[x["truth"]] = seen.get(x["truth"], 0) + 1
+        if seen[x["truth"]] <= cap:
+            capped.append(x)
+    for label, rows in (("uncapped", results), (f"cap {cap}/game", capped)):
+        for name, rs in (("all", rows), ("hard", [x for x in rows if x["hard"]])):
+            if rs:
+                at = lambda k: sum(1 for x in rs if x["hit_rank"] and x["hit_rank"] <= k)
+                prysm = sum(1 for x in rs if x["baseline"] == "right")
+                print(f"{label:>12} {name:>4}: n={len(rs):>3}  R@1 {at(1):>3}  R@5 {at(5):>3}  R@10 {at(10):>3}  | prysm@1 {prysm:>3}")
 
 if __name__ == "__main__":
     main(*sys.argv[1:5])

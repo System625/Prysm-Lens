@@ -45,9 +45,12 @@ class Index:
         self.rows = json.load(open(f"{base}.json"))
         self.games = np.array([r["game"] for r in self.rows])
 
-    def rank(self, query: np.ndarray, k_neighbours: int = 200, top: int = 10):
-        """query: (V, D) normalised view embeddings. Per view, each game scores its best screenshot's
-        similarity among the k nearest; a game's clip score is the sum over views. Returns [(game, score)]."""
+    def rank(self, query: np.ndarray, k_neighbours: int = 300, top: int = 10, temperature: float = 0.02):
+        """query: (V, D) normalised view embeddings. Per view, each game's similarity is its best screenshot
+        among the k nearest; the view then casts one vote, split across games by a softmax over those
+        similarities. A game's clip score is its share of the votes (0..1). Returns [(game, score)].
+        Voting beat summing raw similarities on the pilot (R@10 75 vs 69 of 89): no single frame can
+        outweigh the rest just because a game has many near-duplicate screenshots."""
         sims = query.astype(np.float32) @ self.vecs.T
         score = defaultdict(float)
         for s in sims:
@@ -57,6 +60,9 @@ class Index:
                 g = int(self.games[i])
                 if s[i] > best.get(g, -1):
                     best[g] = float(s[i])
-            for g, v in best.items():
-                score[g] += v
+            gs = list(best)
+            v = np.array([best[g] for g in gs])
+            w = np.exp((v - v.max()) / temperature)
+            for g, wg in zip(gs, w / w.sum()):
+                score[g] += float(wg) / len(sims)
         return sorted(score.items(), key=lambda kv: -kv[1])[:top]
