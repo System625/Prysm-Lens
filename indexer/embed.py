@@ -2,6 +2,7 @@
 
 Usage: python indexer/embed.py data/pool-screenshots.json data/shots data/index
 Writes <out>.npy (N x 1024, fp16, L2-normalised) and <out>.json ([{image_id, game}] row-aligned).
+Progress is saved every 6,400 images under <out>.parts/, so a re-run resumes; unreadable images are dropped.
 """
 import json, os, sys, time
 import numpy as np
@@ -23,23 +24,44 @@ def encode(model, batch):
     f = model.encode_image(batch.to(DEVICE, dtype))
     return torch.nn.functional.normalize(f.float(), dim=-1).cpu().numpy().astype(np.float16)
 
+CHUNK = int(os.environ.get("EMBED_CHUNK", 6400))
+
 def main(src: str, folder: str, out: str) -> None:
     rows = [{"image_id": s["image_id"], "game": s["game"]} for s in json.load(open(src))
             if os.path.exists(f"{folder}/{s['image_id']}.jpg")]
+    parts_dir = f"{out}.parts"
+    os.makedirs(parts_dir, exist_ok=True)
+    if os.path.exists(f"{parts_dir}/rows.json") and json.load(open(f"{parts_dir}/rows.json")) != rows:
+        raise SystemExit(f"{parts_dir} was built from a different screenshot list; delete it to start over")
+    json.dump(rows, open(f"{parts_dir}/rows.json", "w"))
     model, preprocess = load_model()
-    load = lambda r: preprocess(Image.open(f"{folder}/{r['image_id']}.jpg").convert("RGB"))
-    batches = (rows[i:i + 64] for i in range(0, len(rows), 64))
-    parts, t0 = [], time.time()
+
+    def load(r):
+        try:
+            return preprocess(Image.open(f"{folder}/{r['image_id']}.jpg").convert("RGB")), True
+        except Exception:
+            return torch.zeros(3, 336, 336), False
+
+    t0, done = time.time(), 0
     # Decode on threads; DataLoader's spawned workers hang on macOS here.
     with ThreadPoolExecutor(8) as pool:
-        for i, chunk in enumerate(batches):
-            parts.append(encode(model, torch.stack(list(pool.map(load, chunk)))))
-            if i % 20 == 0:
-                n = sum(len(p) for p in parts)
-                print(f"  {n}/{len(rows)}  {n / (time.time() - t0):.1f} img/s", flush=True)
-    np.save(f"{out}.npy", np.concatenate(parts))
-    json.dump(rows, open(f"{out}.json", "w"))
-    print(f"done: {len(rows)} in {time.time() - t0:.0f}s -> {out}.npy")
+        for c in range(0, len(rows), CHUNK):
+            path = f"{parts_dir}/{c // CHUNK:05d}.npz"
+            if os.path.exists(path):
+                continue
+            vecs, good = [], []
+            for b in range(c, min(c + CHUNK, len(rows)), 64):
+                loaded = list(pool.map(load, rows[b:b + 64]))
+                vecs.append(encode(model, torch.stack([t for t, _ in loaded])))
+                good += [ok for _, ok in loaded]
+            np.savez(path, vecs=np.concatenate(vecs), good=np.array(good))
+            done += len(good)
+            print(f"  {c + len(good)}/{len(rows)}  {done / (time.time() - t0):.1f} img/s", flush=True)
+    chunks = [np.load(f"{parts_dir}/{c // CHUNK:05d}.npz") for c in range(0, len(rows), CHUNK)]
+    good = np.concatenate([ch["good"] for ch in chunks])
+    np.save(f"{out}.npy", np.concatenate([ch["vecs"] for ch in chunks])[good])
+    json.dump([r for r, ok in zip(rows, good) if ok], open(f"{out}.json", "w"))
+    print(f"done: {int(good.sum())} of {len(rows)} embedded ({len(rows) - int(good.sum())} unreadable) -> {out}.npy")
 
 if __name__ == "__main__":
     main(*sys.argv[1:4])
