@@ -1,6 +1,7 @@
 """Score PE retrieval on the benchmark clips: recall@1/5/10, overall and on the rows the current pipeline missed.
 
-Usage: python benchmark/run_retrieval.py <candidates.tsv> <baseline.jsonl> <index base> <out.jsonl>
+Usage: python benchmark/run_retrieval.py <candidates.tsv> <baseline.jsonl> <index base> <out.jsonl> [games.json]
+<games.json> holds every indexed game ({igdb_id, title, release_date}); default data/pool-games.json.
 Truth cells: "A | B" alternatives, "prefix:X", "Title (YYYY)"; rows with no single game are skipped.
 """
 import csv, json, os, re, sys, time
@@ -24,8 +25,8 @@ def acceptable(truth: str, games: list[dict]) -> set[int]:
                 ids.add(g["igdb_id"])
     return ids
 
-def main(tsv: str, baseline: str, index_base: str, out: str) -> None:
-    games = json.load(open("data/pool-games.json"))
+def main(tsv: str, baseline: str, index_base: str, out: str, games_path: str = "data/pool-games.json") -> None:
+    games = json.load(open(games_path))
     title = {g["igdb_id"]: g["title"] for g in games}
     base = {r["row"]: r for r in map(json.loads, open(baseline))}
     index = Index(index_base)
@@ -73,4 +74,4 @@ def summarise(results: list[dict], cap: int = 3) -> None:
                 print(f"{label:>12} {name:>4}: n={len(rs):>3}  R@1 {at(1):>3}  R@5 {at(5):>3}  R@10 {at(10):>3}  | prysm@1 {prysm:>3}")
 
 if __name__ == "__main__":
-    main(*sys.argv[1:5])
+    main(*sys.argv[1:6])
