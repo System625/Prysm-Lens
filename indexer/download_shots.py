@@ -1,13 +1,13 @@
 """Download IGDB screenshots listed in a screenshots JSON (from the IGDB /screenshots endpoint).
 
 Usage: python indexer/download_shots.py data/pool-screenshots.json data/shots
-Files land as <out>/<image_id>.jpg at t_screenshot_med (569x320). Re-runs skip what exists.
+Files land as <out>/<image_id>.jpg at t_screenshot_med (569x320), or $IGDB_SIZE. Re-runs skip what exists.
 """
 import json, os, sys
 from concurrent.futures import ThreadPoolExecutor
 import requests
 
-SIZE = "t_screenshot_med"
+SIZE = os.environ.get("IGDB_SIZE", "t_screenshot_med")
 
 def main(src: str, out: str, workers: int = 24) -> None:
     shots = json.load(open(src))

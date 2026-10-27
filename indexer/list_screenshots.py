@@ -2,7 +2,8 @@
 
 Usage: TWITCH_CLIENT_ID=... TWITCH_CLIENT_SECRET=... python indexer/list_screenshots.py <games.json> <out.json>
 <games.json> is a list of objects with an `igdb_id`. Output: [{game, image_id, width, height}].
-IGDB allows 4 requests/second; this stays under it.
+IGDB allows 4 requests/second; this stays under it. Network errors are retried, and progress is
+checkpointed to <out>.partial so a re-run resumes where it stopped.
 """
 import json, os, sys, time
 import requests
@@ -17,14 +18,26 @@ def token() -> str:
 def main(src: str, out: str) -> None:
     ids = sorted({g["igdb_id"] for g in json.load(open(src)) if g.get("igdb_id")})
     headers = {"Client-ID": os.environ["TWITCH_CLIENT_ID"], "Authorization": f"Bearer {token()}"}
-    shots, last = [], 0.0
+    partial = f"{out}.partial"
+    state = json.load(open(partial)) if os.path.exists(partial) else {"next": 0, "shots": []}
+    shots, last = state["shots"], 0.0
     for n, i in enumerate(range(0, len(ids), 100)):
-        chunk, offset = ids[i:i + 100], 0
+        if i < state["next"]:
+            continue
+        chunk, offset, failures = ids[i:i + 100], 0, 0
         while True:
             time.sleep(max(0.0, 0.3 - (time.time() - last)))
             last = time.time()
             body = f"fields game,image_id,width,height; where game=({','.join(map(str, chunk))}); sort id asc; limit 500; offset {offset};"
-            r = requests.post("https://api.igdb.com/v4/screenshots", headers=headers, data=body, timeout=60)
+            try:
+                r = requests.post("https://api.igdb.com/v4/screenshots", headers=headers, data=body, timeout=60)
+            except requests.RequestException as e:
+                failures += 1
+                if failures > 10:
+                    raise
+                print(f"  retry {failures} after {type(e).__name__}", flush=True)
+                time.sleep(min(60, 2 ** failures))
+                continue
             if r.status_code == 429:
                 time.sleep(2)
                 continue
@@ -35,8 +48,11 @@ def main(src: str, out: str) -> None:
                 break
             offset += 500
         if n % 50 == 0:
+            json.dump({"next": i + len(chunk), "shots": shots}, open(partial, "w"))
             print(f"  {i + len(chunk)}/{len(ids)} games, {len(shots)} screenshots", flush=True)
     json.dump(shots, open(out, "w"))
+    if os.path.exists(partial):
+        os.remove(partial)
     print(f"done: {len(shots)} screenshots for {len({s['game'] for s in shots})}/{len(ids)} games -> {out}")
 
 if __name__ == "__main__":
