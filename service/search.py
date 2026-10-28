@@ -66,3 +66,9 @@ class Index:
             for g, wg in zip(gs, w / w.sum()):
                 score[g] += float(wg) / len(sims)
         return sorted(score.items(), key=lambda kv: -kv[1])[:top]
+
+    def evidence(self, query: np.ndarray, game: int, n: int = 3) -> list[str]:
+        """The game's n screenshots closest to any view of the clip: what the verifier is shown for that candidate."""
+        rows = np.flatnonzero(self.games == game)
+        best = (query.astype(np.float32) @ self.vecs[rows].T).max(0)
+        return [self.rows[rows[i]]["image_id"] for i in np.argsort(-best)[:n]]

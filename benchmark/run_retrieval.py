@@ -43,11 +43,18 @@ def main(tsv: str, baseline: str, index_base: str, out: str, games_path: str = "
         frames = extract_frames(f"data/clips/{row}.mp4", f"data/frames/{row}")
         if not frames:
             continue
-        batch = torch.stack([preprocess(v) for f in frames for v in views(Image.open(f))])
-        ranked = index.rank(encode(model, batch))
+        cached = f"data/query-emb/{row}-views.npy"
+        if os.path.exists(cached):
+            query = np.load(cached)
+        else:
+            query = encode(model, torch.stack([preprocess(v) for f in frames for v in views(Image.open(f))]))
+            os.makedirs("data/query-emb", exist_ok=True)
+            np.save(cached, query)
+        ranked = index.rank(query)
         hit = next((i + 1 for i, (g, _) in enumerate(ranked) if g in ok), None)
         b = base.get(row, {})
         rec = {"row": row, "truth": truth, "hit_rank": hit, "top": [title.get(g, g) for g, _ in ranked],
+               "top_ids": [g for g, _ in ranked], "evidence": {str(g): index.evidence(query, g) for g, _ in ranked},
                "scores": [round(s, 2) for _, s in ranked], "baseline": b.get("verdict"),
                "hard": b.get("verdict") != "right", "ms": int((time.time() - t0) * 1000)}
         results.append(rec)
