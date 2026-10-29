@@ -29,7 +29,7 @@ def main(tsv: str, baseline: str, index_base: str, out: str, games_path: str = "
     games = json.load(open(games_path))
     title = {g["igdb_id"]: g["title"] for g in games}
     base = {r["row"]: r for r in map(json.loads, open(baseline))}
-    index = Index(index_base)
+    index = Index(index_base, games_path)
     model, preprocess = load_model()
     results = []
     for n, r in enumerate(csv.reader(open(tsv), delimiter="\t", quoting=csv.QUOTE_NONE), 1):
