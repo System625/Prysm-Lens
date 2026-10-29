@@ -43,15 +43,23 @@ HUB_WEIGHT = 0.5  # similarity minus this times the screenshot's hub score
 PRIOR_WEIGHT = 0.4  # vote share times 1 + this * log(1 + IGDB total_rating_count)
 
 class Index:
-    def __init__(self, base: str, games_path: str | None = None):
-        """<base>-hub.npy (from indexer/hub_scores.py) and games_path's rating counts are optional;
-        without them ranking is the plain vote."""
+    def __init__(self, base: str, games_path: str | None = None, families_path: str | None = None):
+        """<base>-hub.npy (from indexer/hub_scores.py), games_path's rating counts and families_path
+        (from indexer/list_families.py) are each optional; without them ranking is the plain vote per game."""
         self.vecs = np.load(f"{base}.npy").astype(np.float32)
         self.rows = json.load(open(f"{base}.json"))
         self.games = np.array([r["game"] for r in self.rows])
         self.hub = np.load(f"{base}-hub.npy") if os.path.exists(f"{base}-hub.npy") else None
         self.prior = {g["igdb_id"]: float(np.log1p(g.get("total_rating_count") or 0))
                       for g in json.load(open(games_path))} if games_path else {}
+        self.family = {int(g): r for g, r in json.load(open(families_path)).items()} if families_path else {}
+        self.family_members = defaultdict(list)
+        for g, r in self.family.items():
+            self.family_members[r].append(g)
+
+    def members(self, game: int) -> list[int]:
+        """Every game in this game's family (just the game itself when it has no editions)."""
+        return self.family_members.get(self.family.get(game, game), [game])
 
     def rank(self, query: np.ndarray, k_neighbours: int = 300, top: int = 10, temperature: float = 0.02):
         """query: (V, D) normalised view embeddings. Per view, each game's similarity is its best screenshot
@@ -61,26 +69,31 @@ class Index:
         outweigh the rest just because a game has many near-duplicate screenshots.
         On the full 92k-game catalog two corrections lifted R@10 from 67 to 78 of 109 without losing a hard
         clip: a hub penalty (generic screenshots that sit close to everything stop winning votes) and a mild
-        popularity prior on the final score."""
+        popularity prior on the final score.
+        With families loaded, a game's editions vote as one (Days Gone + Days Gone Remastered take one slot,
+        not two); the returned game is the member whose screenshots matched best, see members() for the rest."""
         sims = query.astype(np.float32) @ self.vecs.T
         if self.hub is not None:
             sims -= HUB_WEIGHT * self.hub
-        score = defaultdict(float)
+        score, by_member = defaultdict(float), defaultdict(float)
         for s in sims:
             idx = np.argpartition(-s, k_neighbours)[:k_neighbours]
-            best = {}
+            best, owner = {}, {}
             for i in idx:
                 g = int(self.games[i])
-                if s[i] > best.get(g, -1):
-                    best[g] = float(s[i])
-            gs = list(best)
-            v = np.array([best[g] for g in gs])
+                f = self.family.get(g, g)
+                if s[i] > best.get(f, -9):
+                    best[f], owner[f] = float(s[i]), g
+            fs = list(best)
+            v = np.array([best[f] for f in fs])
             w = np.exp((v - v.max()) / temperature)
-            for g, wg in zip(gs, w / w.sum()):
-                score[g] += float(wg) / len(sims)
-        for g in score:
-            score[g] *= 1 + PRIOR_WEIGHT * self.prior.get(g, 0.0)
-        return sorted(score.items(), key=lambda kv: -kv[1])[:top]
+            for f, wf in zip(fs, w / w.sum()):
+                score[f] += float(wf) / len(sims)
+                by_member[owner[f]] += float(wf)
+        for f in score:
+            score[f] *= 1 + PRIOR_WEIGHT * max(self.prior.get(g, 0.0) for g in self.members(f))
+        ranked = sorted(score.items(), key=lambda kv: -kv[1])[:top]
+        return [(max(self.members(f), key=lambda g: by_member.get(g, 0.0)), s) for f, s in ranked]
 
     def evidence(self, query: np.ndarray, game: int, n: int = 3) -> list[str]:
         """The game's n screenshots closest to any view of the clip: what the verifier is shown for that candidate."""

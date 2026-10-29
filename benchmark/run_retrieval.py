@@ -1,7 +1,8 @@
 """Score PE retrieval on the benchmark clips: recall@1/5/10, overall and on the rows the current pipeline missed.
 
-Usage: python benchmark/run_retrieval.py <candidates.tsv> <baseline.jsonl> <index base> <out.jsonl> [games.json]
+Usage: python benchmark/run_retrieval.py <candidates.tsv> <baseline.jsonl> <index base> <out.jsonl> [games.json] [families.json]
 <games.json> holds every indexed game ({igdb_id, title, release_date}); default data/pool-games.json.
+With <families.json> a candidate is a game family: a hit when the truth is any of its editions (exact_rank: the shown one).
 Truth cells: "A | B" alternatives, "prefix:X", "Title (YYYY)"; rows with no single game are skipped.
 """
 import csv, json, os, re, sys, time
@@ -25,11 +26,12 @@ def acceptable(truth: str, games: list[dict]) -> set[int]:
                 ids.add(g["igdb_id"])
     return ids
 
-def main(tsv: str, baseline: str, index_base: str, out: str, games_path: str = "data/pool-games.json") -> None:
+def main(tsv: str, baseline: str, index_base: str, out: str, games_path: str = "data/pool-games.json",
+         families_path: str | None = None) -> None:
     games = json.load(open(games_path))
     title = {g["igdb_id"]: g["title"] for g in games}
     base = {r["row"]: r for r in map(json.loads, open(baseline))}
-    index = Index(index_base, games_path)
+    index = Index(index_base, games_path, families_path)
     model, preprocess = load_model()
     results = []
     for n, r in enumerate(csv.reader(open(tsv), delimiter="\t", quoting=csv.QUOTE_NONE), 1):
@@ -51,10 +53,12 @@ def main(tsv: str, baseline: str, index_base: str, out: str, games_path: str = "
             os.makedirs("data/query-emb", exist_ok=True)
             np.save(cached, query)
         ranked = index.rank(query)
-        hit = next((i + 1 for i, (g, _) in enumerate(ranked) if g in ok), None)
+        hit = next((i + 1 for i, (g, _) in enumerate(ranked) if ok & set(index.members(g))), None)
+        exact = next((i + 1 for i, (g, _) in enumerate(ranked) if g in ok), None)
         b = base.get(row, {})
-        rec = {"row": row, "truth": truth, "hit_rank": hit, "top": [title.get(g, g) for g, _ in ranked],
+        rec = {"row": row, "truth": truth, "hit_rank": hit, "exact_rank": exact, "top": [title.get(g, g) for g, _ in ranked],
                "top_ids": [g for g, _ in ranked], "evidence": {str(g): index.evidence(query, g) for g, _ in ranked},
+               "editions": {str(g): [m for m in index.members(g) if m != g] for g, _ in ranked},
                "scores": [round(s, 2) for _, s in ranked], "baseline": b.get("verdict"),
                "hard": b.get("verdict") != "right", "ms": int((time.time() - t0) * 1000)}
         results.append(rec)
@@ -81,4 +85,4 @@ def summarise(results: list[dict], cap: int = 3) -> None:
                 print(f"{label:>12} {name:>4}: n={len(rs):>3}  R@1 {at(1):>3}  R@5 {at(5):>3}  R@10 {at(10):>3}  | prysm@1 {prysm:>3}")
 
 if __name__ == "__main__":
-    main(*sys.argv[1:6])
+    main(*sys.argv[1:7])
