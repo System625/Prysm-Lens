@@ -65,24 +65,35 @@ def build_request(clip: str, candidates: list[dict], mode: str = "video", frames
         content.append({"type": "input_text", "text": "Which game is this? There are no candidates: answer pick=none "
                                                       "and put the game in game_title."})
     else:
-        content.append({"type": "input_text", "text": "Candidates, each with the screenshots of it that look most like "
-                                                      "the clip. Exactly one may be right, or none."})
+        content.append({"type": "input_text", "text": "Candidates from a visual search, each with the screenshots of it "
+                                                      "that look most like the clip. The search often misses obscure, new and "
+                                                      "unreleased games, so all of them may be wrong. Pick a letter only when its "
+                                                      "screenshots show the same game as the clip (same HUD, characters, places), "
+                                                      "not just the same genre or mood. Otherwise answer pick=none and put your "
+                                                      "own best guess in game_title, with your honest confidence."})
         for label, c in zip(LABELS, candidates):
             name = f"{c['title']} ({c['year']})" if c.get("year") else c["title"]
             content.append({"type": "input_text", "text": f"{label}: {name}"})
             content += [{"type": "input_image", "image_url": data_url(s, "image/jpeg")} for s in c["shots"]]
-        content.append({"type": "input_text", "text": "Which candidate is the game in the clip?"})
+        content.append({"type": "input_text", "text": "Which candidate, if any, is the game in the clip?"})
     return {"model": MODEL, "instructions": INSTRUCTIONS,
             "input": [{"type": "message", "role": "user", "content": content}],
             "text": {"format": {"type": "json_schema", "name": "game_pick", "schema": SCHEMA, "strict": True}},
             "reasoning": {"effort": effort}, "max_output_tokens": max_output_tokens}
 
 def call(body: dict, key: str, tries: int = 4) -> dict:
-    """POST to the Responses API; retries 429/5xx with backoff. Returns {answer, usage, usd, ms, response_id};
+    """POST to the Responses API; retries 429/5xx, timeouts and dropped connections with backoff (a call normally
+    answers in 6-20 s; one hung past 300 s on 30 Oct). Returns {answer, usage, usd, ms, response_id};
     answer is None (and error set) when the model ran but gave no usable answer, so its cost is still counted."""
     for attempt in range(tries):
         t0 = time.time()
-        r = requests.post(API, json=body, headers={"Authorization": f"Bearer {key}"}, timeout=300)
+        try:
+            r = requests.post(API, json=body, headers={"Authorization": f"Bearer {key}"}, timeout=(20, 150))
+        except (requests.Timeout, requests.ConnectionError) as e:
+            if attempt == tries - 1:
+                raise RuntimeError(f"{type(e).__name__} after {tries} tries") from e
+            time.sleep(2 ** attempt * 5)
+            continue
         if r.status_code in (429, 500, 502, 503, 504) and attempt < tries - 1:
             time.sleep(2 ** attempt * 5)
             continue
