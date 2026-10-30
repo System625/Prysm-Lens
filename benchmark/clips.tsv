@@ -1,0 +1,123 @@
+row	provider	url	truth	include
+2	facebook	https://www.facebook.com/reel/864398539952986/	PUBG: Battlegrounds	yes
+3	instagram	https://www.instagram.com/reel/Dey06AzDuud/	Phantom Blade Zero	
+4	instagram	https://www.instagram.com/reel/DWFEFVdjtQx/	Crimson Desert	yes
+5	instagram	https://www.instagram.com/reel/Dcjo2biI9Tc/	? claims GTA 6	exclude
+6	other	https://www.facebook.com/reel/1117227671009420/	Assassin's Creed Valhalla	yes
+7	other	https://www.facebook.com/reel/1318510196718499/	Elden Ring	yes
+8	tiktok	https://www.tiktok.com/@zuldimyt/video/7367452073203387694	Hades II	
+9	tiktok	https://www.tiktok.com/@ahsanfiaz398/video/7518391943714393366	Grand Theft Auto V	
+10	tiktok	https://www.tiktok.com/@madmorph/video/7627863188859555094	Goose Goose Duck	
+11	tiktok	https://www.tiktok.com/@siriboy15/video/7630687118985121045	Mortal Kombat X	
+12	tiktok	https://www.tiktok.com/@gameuncover/video/7652504664491052320	Stardew Valley	
+13	tiktok	https://www.tiktok.com/@jayify/video/7693974426869599510	Scam With Your Friends	
+14	tiktok	https://www.tiktok.com/@awkwardvictoria/video/7692293192821034271	Pools	
+15	tiktok	https://www.tiktok.com/@kazzer.vfx/video/7682928602744147222	Elden Ring	
+16	tiktok	https://www.tiktok.com/@dectwelve12/video/7593863162965871879	God of War (2018)	
+17	tiktok	https://www.tiktok.com/@jokergoingwild/video/7689603117142347022	The Radio Tower	yes
+18	tiktok	https://www.tiktok.com/@lichcs2/video/7680296902365023509	Counter-Strike 2	
+19	tiktok	https://www.tiktok.com/@lichcs2/video/7680296902365023509	Counter-Strike 2	dup
+20	tiktok	https://www.tiktok.com/@sayuiusv_/video/7625690154929278239	Obey the Voice	dup
+21	tiktok	https://www.tiktok.com/@mado.whatch/video/7563985924019784982	Battlefield 6	
+22	tiktok	https://www.tiktok.com/@aethelredits/video/7660254043813596447	Days Gone	
+23	tiktok	https://www.tiktok.com/@madmorph/video/7632714165622164758	Too Deep To Quit	yes
+24	tiktok	https://www.tiktok.com/@siriboy15/video/7630687118985121045	Mortal Kombat X	dup
+25	tiktok	https://www.tiktok.com/@ericsinpain/video/7249551080042859819	Days Gone	
+26	tiktok	https://www.tiktok.com/@lichcs2/video/7680296902365023509	Counter-Strike 2	dup
+27	tiktok	https://www.tiktok.com/@jessica.gaming64/video/7623901746292673799	SnowRunner	yes
+28	tiktok	https://www.tiktok.com/@4aliceee29/video/7600507515494878519	It Takes Two	yes
+29	tiktok	https://www.tiktok.com/@4aliceee29/video/7600507515494878519	It Takes Two	dup
+30	tiktok	https://www.tiktok.com/@august.efootball/video/7663868437285850376	eFootball	yes
+31	tiktok	https://www.tiktok.com/@kazzer.vfx/video/7682928602744147222	Elden Ring	dup
+32	tiktok	https://www.tiktok.com/@iilnyx/video/7502760435402247430	Days Gone	yes
+33	tiktok	https://www.tiktok.com/@aethelredits/video/7660254043813596447	Days Gone	dup
+34	x	https://x.com/kojimahead/status/2098070481190387790	Marvel's Wolverine	
+35	x	https://x.com/isyphrus/status/2104839236797211075	Call of Duty: Modern Warfare 2	
+36	x	https://x.com/KindredBlade/status/2103491228738429026/video/1	Onimusha: Way of the Sword	
+37	x	https://x.com/ofelipoca/status/2103700206130811340	Alan Wake II	yes
+38	x	https://x.com/sunhilegend/status/2103883220014055770	Onimusha: Way of the Sword	
+39	x	https://x.com/italianfiesta/status/2104663236503113792	Tekken 8	yes
+40	x	https://x.com/succome/status/2104391228288888860	Wuchang: Fallen Feathers	yes
+41	x	https://x.com/mrkelsgame/status/2103836807054200911	The Last of Us Part II	
+42	x	https://x.com/synticat0r/status/2104811319803130132	-	drop
+43	x	https://x.com/playstation/status/2104541971221979413	God of War Laufey	
+44	x	https://x.com/reforgegaming/status/2104550832033144879	God of War Laufey	
+45	x	https://x.com/bluethunderreal/status/2104675865355505965	The Witcher 3: Wild Hunt	yes
+46	x	https://x.com/littlenutsac_/status/2105024611066794258	Silent Hill: Townfall	yes
+47	x	https://x.com/ubisoft/status/2104964420904399326	Morbid Metal	yes
+48	x	https://x.com/videoartgame/status/2105019279469105256	Silent Hill: Townfall	
+49	x	https://x.com/playstationuk/status/2105308058570403872	Ghost of Yotei	
+50	x	https://x.com/SuckerPunchProd/status/2105689216118366237	Ghost of Yotei	
+51	x	https://x.com/okami13_/status/2108364511073697824	Phantom Blade Zero	
+52	x	https://x.com/eldenring/status/2112484094240006647	-	drop
+53	x	https://x.com/enigmagamingx/status/2113514076055998522	Call of Duty: Modern Warfare 4	yes
+54	youtube	https://www.youtube.com/watch?v=E3Huy2cdih0	Elden Ring	
+55	youtube	https://youtu.be/eOrb93UZfPU	Grand Theft Auto VI	
+56	youtube	https://youtu.be/TSi0iJYSQ24	EA Sports FC 26	
+57	youtube	https://www.youtube.com/watch?v=c3NHykKhLpg	Elden Ring	
+58	youtube	https://www.youtube.com/watch?v=3xJEds3KZAM	Lies of P	
+59	youtube	https://www.youtube.com/watch?v=bg8i4CvE74M	Elden Ring	
+60	youtube	https://www.youtube.com/watch?v=q_ajc87CDs0	Hades II	
+61	youtube	https://www.youtube.com/watch?v=AKXiKBnzpBQ	Elden Ring	
+62	youtube	https://www.youtube.com/watch?v=PgUssv-fV7w	Hollow Knight: Silksong	
+63	youtube	https://www.youtube.com/watch?v=hNNAcF7Gfw4	Brawlhalla	
+64	youtube	https://youtube.com/watch?v=7Y46IaeNTaY	Brawlhalla	
+65	youtube	https://youtube.com/watch?v=jXjikz2sMho	Brawlhalla	
+66	youtube	https://youtube.com/shorts/zgGsPuh3AVE	Call of Duty: Mobile	
+67	youtube	https://youtube.com/shorts/JRh96My20lM	Tom Clancy's Splinter Cell: Double Agent	
+68	youtube	https://youtube.com/shorts/krFGML0jwLE	Tom Clancy's Splinter Cell: Conviction	
+69	youtube	https://www.youtube.com/watch?v=19Ifhq-qI0o	Elden Ring	
+70	youtube	https://www.youtube.com/watch?v=_Svc61XU4Wk	Elden Ring	
+71	youtube	https://youtube.com/watch?v=JSp6bP2MmnU	Brawlhalla	yes
+72	youtube	https://youtube.com/watch?v=B4JGI5FENH4	Brawlhalla	yes
+73	youtube	https://youtube.com/watch?v=xBq3z3VXpR4	Marvel Rivals	
+74	youtube	https://youtube.com/watch?v=fAkvrW5sVVY	Brawlhalla	
+75	youtube	https://youtube.com/watch?v=Oy5w8sbt25E	Brawlhalla	
+76	youtube	https://youtube.com/watch?v=hoRHJuVm3jg	Brawlhalla	
+77	youtube	https://www.youtube.com/watch?v=SO4zDqgxv7Q	Brawlhalla	
+78	youtube	https://youtube.com/shorts/RNs129oykJg	Fortnite	
+79	youtube	https://youtube.com/shorts/VUBK49mpIhg	Black Myth: Wukong	yes
+80	youtube	https://youtube.com/watch?v=NVKkZFVwiz0	Minecraft	
+81	youtube	https://youtube.com/watch?v=TAmQY_ycINw	Brawlhalla	yes
+82	youtube	https://youtube.com/shorts/J6A_2wCXRl4	Marvel's Wolverine	
+83	youtube	https://youtu.be/p3hP52I6ccs	Brawlhalla	
+84	youtube	https://youtu.be/dqh9X_LMhmc	Brawlhalla	
+85	youtube	https://youtu.be/XoZ-uMfkSKg	Brawlhalla	
+86	youtube	https://youtube.com/shorts/pChfSYz1q08	Roblox	
+87	youtube	https://youtube.com/shorts/2-67twDuY-Q	MULTIPLE GAMES	
+88	youtube	https://youtube.com/shorts/hbALG3PRW2o	Counter-Strike 2 | Counter-Strike: Global Offensive	
+89	youtube	https://youtube.com/shorts/NFwX5SGfjGw	Call of Duty: Warzone | prefix:Call of Duty	
+90	youtube	https://youtube.com/shorts/DK-UQIfnAJ0	NOT A GAME	
+91	youtube	https://youtube.com/shorts/vyI4rUTBKh0	NOT A GAME	
+92	youtube	https://youtube.com/shorts/wYA0nSeTeJ4	NOT A GAME	
+93	youtube	https://youtube.com/shorts/rNIX0yH9QZs	Elden Ring | Elden Ring Nightreign	
+94	tiktok	https://www.tiktok.com/@pwmist/video/7514605531181370646	God of War Ragnarök	
+95	tiktok	https://www.tiktok.com/@sayuiusv_/video/7625690154929278239	Obey the Voice	yes
+96	tiktok	https://www.tiktok.com/@amir.cxn/video/7177748668148092165	MULTIPLE GAMES	
+97	tiktok	https://www.tiktok.com/@karutaclan/video/7640367652237610254	(unknown)	drop
+98	tiktok	https://www.tiktok.com/@thegamingcorner97/video/7482603252375162130	prefix:Call of Duty	
+99	tiktok	https://www.tiktok.com/@gamer/video/7130169073979231494	Assetto Corsa	
+100	tiktok	https://www.tiktok.com/@devisegaming/video/7628254684574190870	Squad	
+101	tiktok	https://www.tiktok.com/@duckinvaders/video/7682142951044058382	Dimraeth	
+102	tiktok	https://www.tiktok.com/@howtocringetv/video/7467828759031270662	Riders Republic	
+103	tiktok	https://www.tiktok.com/@valchiriatv/video/7545969759876025622	Call of Duty 4: Modern Warfare	yes
+104	tiktok	https://www.tiktok.com/@soulivanh56/video/7643061690816302357	Forza Horizon 6	yes
+105	tiktok	https://www.tiktok.com/@malakyemong/video/7574850383756021022	Level Devil	yes
+106	tiktok	https://www.tiktok.com/@sirleerhm_/video/7674153268985040149	A Way Out	yes
+107	tiktok	https://www.tiktok.com/@hellmei0/video/7676179846787075358	Rerouted	yes
+108	tiktok	https://www.tiktok.com/@sosg_society/video/7412126829265374482	Elden Ring	yes
+109	tiktok	https://www.tiktok.com/@harlfx_/video/7486210416788491528	Blood Strike	yes
+110	tiktok	https://www.tiktok.com/@sb_designs/video/7665635794580704545	S.T.A.L.K.E.R. 2: Heart of Chornobyl	yes
+111	tiktok	https://www.tiktok.com/@ackerlad6/video/7448269011462262049	Resident Evil 4	yes
+112	tiktok	https://www.tiktok.com/@gameranh1/video/7637011954913103122	The Last of Us Part II	yes
+113	tiktok	https://www.tiktok.com/@valchiriatv/video/7561939196580007190	Battlefield 6	yes
+114	tiktok	https://www.tiktok.com/@justdougy/video/7534351224624123192	Elden Ring	yes
+115	tiktok	https://www.tiktok.com/@subwaysurfers/video/7608242750542335254	Subway Surfers	yes
+116	tiktok	https://www.tiktok.com/@schleswiger.ac/video/7613463000606952726	Assetto Corsa	yes
+117	tiktok	https://www.tiktok.com/@iqupw/video/7519250502043962638	Assetto Corsa	yes
+118	tiktok	https://www.tiktok.com/@valchiriatv/video/7483850778910739734	Call of Duty: Modern Warfare 2 Campaign Remastered	yes
+119	tiktok	https://www.tiktok.com/@gameplay_village/video/7198040200180698374	Elden Ring	yes
+120	tiktok	https://www.tiktok.com/@gaming43510/video/7546646199747611917	Battlefield V	yes
+121	tiktok	https://www.tiktok.com/@creamiliciouzzz/video/7491606699351084306	R.E.P.O.	yes
+122	tiktok	https://www.tiktok.com/@saiyvx/video/7652492115296963858	(multi-game)	exclude
+123	tiktok	https://www.tiktok.com/@look4volt/video/7608874463391780110	(multi-game)	exclude
