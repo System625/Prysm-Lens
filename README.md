@@ -60,6 +60,17 @@ We publish the **clip links and labels only** ([benchmark/clips.tsv](benchmark/c
 
 **Index alone, first gate (575,973 screenshots of 87,077 games, 104 distinct clips):** the right game is first for 45 clips and in the top 10 for 72; on the hard subset, in the top 10 for 13 of 19. Muse Spark then picks from those ten.
 
+**Muse Spark, 5 runs per clip, majority vote, same 104 clips** ([benchmark/score_combined.py](benchmark/score_combined.py)):
+
+| | All 104 | Hard 19 | Confidently wrong |
+|---|---|---|---|
+| Prysm today (captions) | 84 | 0 | 6 |
+| Muse Spark, video only | 75 | 11 | 7 |
+| Muse Spark + Lens top 10 | 64 | **13** | 24 |
+| Prysm when confident, else Muse Spark (sure on its own, else + Lens) | **89** | 10 | 12 |
+
+Lens helps where it was meant to: on clips the caption pipeline misses, Muse Spark names 13 of 19 with the candidates and 11 without. On clips Muse Spark already knows, a wrong candidate list pulls it off the answer, so Lens is only consulted when Muse Spark isn't sure. Five of the hard clips are ones Prysm answers confidently and wrongly, so no cascade reaches them; that, and the 19-clip sample, are the open problems. About $17 for all 1,040 calls.
+
 ## What is new in this repo
 
 The hackathon only counts work built during the event. Here is the split:
@@ -94,7 +105,7 @@ The web demo shows every stage, not only the answer: the frames it pulled out, t
 
 - [x] Benchmark clips collected and hand-labelled
 - [x] Baseline measured on the existing pipeline (81%)
-- [ ] Muse Spark on the video alone (no index), same clips
+- [x] Muse Spark on the video alone (no index), same clips
 - [x] Perception Encoder index plus a recall@10 check (72 of 104 in the top 10)
 - [ ] SAM 3.1 cleaning
 - [ ] Full pipeline vs baseline, on all clips and on the hard subset

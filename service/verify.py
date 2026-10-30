@@ -14,6 +14,7 @@ API = "https://api.meta.ai/v1/responses"
 MODEL = "muse-spark-1.3"
 PRICE_IN, PRICE_OUT = 1.25 / 1e6, 4.25 / 1e6  # USD per token, muse-spark-1.3
 CLIP_SECONDS, CLIP_HEIGHT = 60, 480
+CLIP_MAX_BYTES, SMALL_HEIGHT = 4_000_000, 360  # bigger uploads kept dying on a slow link (30 Oct): re-encode smaller
 FRAMES = 8
 LABELS = "ABCDEFGHIJ"
 
@@ -38,16 +39,23 @@ Sequels, remasters and mobile ports often look alike: compare the HUD, menus, ch
 Never name a game you can't see evidence for. If unsure, say so with low confidence."""
 
 def prepare_clip(clip: str, out: str, seconds: int = CLIP_SECONDS, height: int = CLIP_HEIGHT) -> str:
-    """Up to `seconds` of the clip from 5% in, scaled to at most `height` lines, audio kept. Cached at `out`."""
-    if os.path.exists(out):
+    """Up to `seconds` of the clip from 5% in, scaled to at most `height` lines, audio kept. Cached at `out`.
+    Anything over CLIP_MAX_BYTES is redone at SMALL_HEIGHT lines and a lower bitrate."""
+    if os.path.exists(out) and os.path.getsize(out) <= CLIP_MAX_BYTES:
         return out
+    if os.path.exists(out) or height == SMALL_HEIGHT:
+        height, crf = SMALL_HEIGHT, 34
+    else:
+        crf = 30
     os.makedirs(os.path.dirname(out), exist_ok=True)
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", clip],
                                capture_output=True, text=True).stdout.strip() or 0)
     start = dur * 0.05 if dur > seconds else 0
     subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{start:.2f}", "-t", str(seconds), "-i", clip,
-                    "-vf", f"scale=-2:'min({height},ih)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
+                    "-vf", f"scale=-2:'min({height},ih)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
                     "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", out, "-y"], check=True)
+    if os.path.getsize(out) > CLIP_MAX_BYTES and height != SMALL_HEIGHT:
+        return prepare_clip(clip, out, seconds, SMALL_HEIGHT)
     return out
 
 def data_url(path: str, mime: str) -> str:

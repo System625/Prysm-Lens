@@ -4,9 +4,10 @@ Usage: python benchmark/run_verify.py <retrieval.jsonl> <shots dir> <out.jsonl> 
 <retrieval.jsonl> comes from run_retrieval.py (needs its top_ids + evidence fields).
 Nothing is sent without --live (and MODEL_API_KEY set): a dry run builds every request and reports its size.
 Results append to <out.jsonl>; a re-run skips (row, mode, run) already there, so a stopped run resumes.
---max-usd stops the run once the summed cost reaches it. LLM answers vary: use --runs 5 before trusting a number.
+--max-usd stops the run once the summed cost reaches it (calls already in flight still finish). LLM answers vary: use --runs 5 before trusting a number.
 """
-import argparse, json, os, re, sys
+import argparse, json, os, re, sys, threading
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from benchmark.run_retrieval import acceptable
@@ -33,6 +34,7 @@ def main() -> None:
     p.add_argument("--games", default="data/catalog-games.json")
     p.add_argument("--effort", default="low")
     p.add_argument("--max-usd", type=float, default=2.0)
+    p.add_argument("--workers", type=int, default=4, help="calls in flight at once (the API allows 3,000 a minute)")
     p.add_argument("--live", action="store_true")
     a = p.parse_args()
     key = os.environ.get("MODEL_API_KEY")
@@ -51,6 +53,7 @@ def main() -> None:
     done = {(d["row"], d["mode"], d["run"]) for d in map(json.loads, open(a.out))} if os.path.exists(a.out) else set()
     spent = sum(d.get("usd", 0) for d in map(json.loads, open(a.out))) if os.path.exists(a.out) else 0.0
 
+    jobs, games_ok = [], {}
     for rec in recs:
         row = rec["row"]
         clip = prepare_clip(f"data/clips/{row}.mp4", f"data/verify-clips/{row}.mp4")
@@ -59,28 +62,41 @@ def main() -> None:
             {"title": title.get(g, str(g)), "year": year.get(g), "shots": [f"{a.shots}/{s}.jpg" for s in rec["evidence"][str(g)]
                                                                           if os.path.exists(f"{a.shots}/{s}.jpg")]}
             for g in rec["top_ids"]]
-        body = build_request(clip, cands, a.mode, frames, a.effort)
-        parts = body["input"][0]["content"]
-        size = len(json.dumps(body)) / 1e6
         if not a.live:
+            body = build_request(clip, cands, a.mode, frames, a.effort)
+            parts = body["input"][0]["content"]
+            size = len(json.dumps(body)) / 1e6
             print(f"{row:>3} dry  {size:5.1f} MB  {sum(c['type'] == 'input_image' for c in parts):>2} images  "
                   f"video {os.path.getsize(clip) / 1e6:4.1f} MB  | {rec['truth'][:40]}")
             continue
-        ok = acceptable(rec["truth"], games)
-        for run in range(a.runs):
-            if (row, a.mode, run) in done:
-                continue
+        games_ok[row] = acceptable(rec["truth"], games)
+        jobs += [(rec, clip, frames, cands, run) for run in range(a.runs) if (row, a.mode, run) not in done]
+
+    lock = threading.Lock()
+    def work(job):
+        """One call, on a worker thread. The request is built here, not up front: 500 bodies of 3-8 MB won't fit in RAM."""
+        nonlocal spent
+        rec, clip, frames, cands, run = job
+        with lock:
             if spent >= a.max_usd:
-                raise SystemExit(f"stopped: spent ${spent:.2f} of --max-usd {a.max_usd}")
-            try:
-                res = call(body, key)
-            except RuntimeError as e:
-                print(f"{row:>3} run {run} ERROR {e}", flush=True)
-                continue
+                return rec, run, None, f"skipped: spent ${spent:.2f} of --max-usd {a.max_usd}"
+        try:
+            res = call(build_request(clip, cands, a.mode, frames, a.effort), key)
+        except RuntimeError as e:
+            return rec, run, None, f"ERROR {e}"
+        with lock:
             spent += res["usd"]
+        return rec, run, res, None
+
+    with ThreadPoolExecutor(a.workers) as pool:
+        for rec, run, res, err in pool.map(work, jobs):
+            row = rec["row"]
+            if res is None:
+                print(f"{row:>3} run {run} {err}", flush=True)
+                continue
             out = {"row": row, "mode": a.mode, "run": run, "truth": rec["truth"], "hard": rec["hard"],
                    "lens_hit_rank": rec["hit_rank"], "baseline": rec["baseline"], **res,
-                   **(judge(rec, res["answer"], ok, title) if res["answer"] else {"right": False, "own_right": False})}
+                   **(judge(rec, res["answer"], games_ok[row], title) if res["answer"] else {"right": False, "own_right": False})}
             with open(a.out, "a") as f:
                 f.write(json.dumps(out) + "\n")
             ans = res["answer"] or {}
