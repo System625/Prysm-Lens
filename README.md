@@ -54,9 +54,11 @@ clip ──► frames ──► SAM 3.1 ──► Perception Encoder ──► i
 
 There is no public benchmark for naming a video game from a clip. The closest we found is a 2023 paper that classifies 10 games. So we are building one from real clips people shared into Prysm. Each clip is labelled by hand, and no game contributes more than 3 clips.
 
-**Baseline, measured before the hackathon on Prysm's existing text-based pipeline:** 62 of 75 clips right on the first guess, **83%**. The misses are almost all the clips described above, where the caption doesn't name the game. That "hard subset" is what Lens is for, and we will report every result on it separately.
+**Baseline, measured before the hackathon on Prysm's existing text-based pipeline:** 61 of 75 clips right on the first guess, **81%**. The misses are almost all the clips described above, where the caption doesn't name the game. That "hard subset" is what Lens is for, and we will report every result on it separately.
 
-We will publish the **clip links and labels only**. The videos belong to their creators and are not redistributed here.
+We publish the **clip links and labels only** ([benchmark/clips.tsv](benchmark/clips.tsv)). The videos belong to their creators and are not redistributed here. Links are the posts' own URLs, never the share links that pointed us to them.
+
+**Index alone, first gate (575,973 screenshots of 87,077 games, 104 distinct clips):** the right game is first for 45 clips and in the top 10 for 72; on the hard subset, in the top 10 for 13 of 19. Muse Spark then picks from those ten.
 
 ## What is new in this repo
 
@@ -65,7 +67,7 @@ The hackathon only counts work built during the event. Here is the split:
 | Built during the hackathon (this repo) | Existed before |
 |---|---|
 | Screenshot index and the indexing pipeline | The Prysm app (iOS / Android) |
-| SAM 3.1 frame cleaning | Prysm's text-based share pipeline (the 83% baseline) |
+| SAM 3.1 frame cleaning | Prysm's text-based share pipeline (the 81% baseline) |
 | Search service | The game catalog Lens indexes against |
 | Muse Spark verification step | |
 | Voice step | |
@@ -91,9 +93,9 @@ The web demo shows every stage, not only the answer: the frames it pulled out, t
 ## Status
 
 - [x] Benchmark clips collected and hand-labelled
-- [x] Baseline measured on the existing pipeline (83%)
+- [x] Baseline measured on the existing pipeline (81%)
 - [ ] Muse Spark on the video alone (no index), same clips
-- [ ] Perception Encoder index plus a recall@10 check
+- [x] Perception Encoder index plus a recall@10 check (72 of 104 in the top 10)
 - [ ] SAM 3.1 cleaning
 - [ ] Full pipeline vs baseline, on all clips and on the hard subset
 - [ ] Search service deployed
