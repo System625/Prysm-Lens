@@ -6,6 +6,8 @@ Modes:
   video  - the clip itself, with its audio (a streamer saying the name counts as evidence)
   frames - FRAMES stills from the clip instead of the video, for when video and images can't share a request
   blind  - the clip and no candidates: what Muse Spark knows on its own, the no-index baseline
+  first  - the clip and the candidates, but Muse Spark names the game on its own before it looks at them, and keeps
+           that answer unless a candidate's screenshots show the same game (a wrong list cost video mode easy clips)
 """
 import base64, json, os, subprocess, time
 import requests
@@ -32,6 +34,13 @@ SCHEMA = {
                      "description": "What in the clip decided it: HUD, characters, locations, art style, on-screen text, spoken words."},
     },
 }
+
+# "first" mode: the model commits to its own answer (own_guess) before it reads the candidates.
+SCHEMA_FIRST = {**SCHEMA, "required": ["own_guess", "own_confidence", *SCHEMA["required"]],
+                "properties": {"own_guess": {"type": "string",
+                                             "description": "The game in the clip judged from the clip alone, before reading the candidates."},
+                               "own_confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                               **SCHEMA["properties"]}}
 
 INSTRUCTIONS = """You name the video game shown in a short gameplay clip from social media.
 The clip may carry a streamer's facecam, subtitles, stickers or a meme caption; judge the gameplay underneath.
@@ -69,6 +78,9 @@ def build_request(clip: str, candidates: list[dict], mode: str = "video", frames
         content += [{"type": "input_image", "image_url": data_url(f, "image/jpeg")} for f in frames[:FRAMES]]
     else:
         content.append({"type": "input_video", "video_url": data_url(clip, "video/mp4")})
+    if mode == "first":
+        content.append({"type": "input_text", "text": "Step 1: before reading anything below, decide which game the clip "
+                                                      "shows from the clip alone. Put it in own_guess with own_confidence."})
     if mode == "blind":
         content.append({"type": "input_text", "text": "Which game is this? There are no candidates: answer pick=none "
                                                       "and put the game in game_title."})
@@ -83,10 +95,15 @@ def build_request(clip: str, candidates: list[dict], mode: str = "video", frames
             name = f"{c['title']} ({c['year']})" if c.get("year") else c["title"]
             content.append({"type": "input_text", "text": f"{label}: {name}"})
             content += [{"type": "input_image", "image_url": data_url(s, "image/jpeg")} for s in c["shots"]]
-        content.append({"type": "input_text", "text": "Which candidate, if any, is the game in the clip?"})
+        content.append({"type": "input_text", "text": "Step 2: keep own_guess as your answer unless a candidate's screenshots "
+                                                      "clearly show the same game as the clip; a candidate list can be wrong, "
+                                                      "so a confident own_guess that no candidate matches stays, with pick=none. "
+                                                      "If own_guess is one of the candidates, pick that letter."
+                                          if mode == "first" else "Which candidate, if any, is the game in the clip?"})
     return {"model": MODEL, "instructions": INSTRUCTIONS,
             "input": [{"type": "message", "role": "user", "content": content}],
-            "text": {"format": {"type": "json_schema", "name": "game_pick", "schema": SCHEMA, "strict": True}},
+            "text": {"format": {"type": "json_schema", "name": "game_pick", "strict": True,
+                                "schema": SCHEMA_FIRST if mode == "first" else SCHEMA}},
             "reasoning": {"effort": effort}, "max_output_tokens": max_output_tokens}
 
 def call(body: dict, key: str, tries: int = 4) -> dict:

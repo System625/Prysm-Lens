@@ -60,16 +60,16 @@ We publish the **clip links and labels only** ([benchmark/clips.tsv](benchmark/c
 
 **Index alone, first gate (575,973 screenshots of 87,077 games, 104 distinct clips):** the right game is first for 45 clips and in the top 10 for 72; on the hard subset, in the top 10 for 13 of 19. Muse Spark then picks from those ten.
 
-**Muse Spark, 5 runs per clip, majority vote, same 104 clips** ([benchmark/score_combined.py](benchmark/score_combined.py)):
+**Muse Spark, 5 runs per clip, majority vote, same 104 clips** ([benchmark/score_combined.py](benchmark/score_combined.py)). Any edition of the right game counts (Days Gone Remastered for Days Gone), for every row of the table:
 
 | | All 104 | Hard 19 | Confidently wrong |
 |---|---|---|---|
-| Prysm today (captions) | 84 | 0 | 6 |
+| Prysm today (captions) | 85 | 1 | 5 |
 | Muse Spark, video only | 75 | 11 | 7 |
-| Muse Spark + Lens top 10 | 64 | **13** | 24 |
-| Prysm when confident, else Muse Spark (sure on its own, else + Lens) | **89** | 10 | 12 |
+| Muse Spark + Lens top 10 | 73 | **13** | 15 |
+| Prysm when confident, else Muse Spark (sure on its own, else + Lens) | **90** | 11 | 11 |
 
-Lens helps where it was meant to: on clips the caption pipeline misses, Muse Spark names 13 of 19 with the candidates and 11 without. On clips Muse Spark already knows, a wrong candidate list pulls it off the answer, so Lens is only consulted when Muse Spark isn't sure. Five of the hard clips are ones Prysm answers confidently and wrongly, so no cascade reaches them; that, and the 19-clip sample, are the open problems. About $17 for all 1,040 calls.
+Lens helps where it was meant to: on clips the caption pipeline misses, Muse Spark names 13 of 19 with the candidates and 11 without. On clips Muse Spark already knows, a wrong candidate list can pull it off the answer (15 confidently wrong vs 7), so Lens is only consulted when Muse Spark isn't sure. Four of the hard clips are ones Prysm answers confidently and wrongly, so no cascade reaches them; that, and the 19-clip sample, are the open problems. About $17 for all 1,040 calls.
 
 ## What is new in this repo
 

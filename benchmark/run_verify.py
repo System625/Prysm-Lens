@@ -5,6 +5,8 @@ Usage: python benchmark/run_verify.py <retrieval.jsonl> <shots dir> <out.jsonl> 
 Nothing is sent without --live (and MODEL_API_KEY set): a dry run builds every request and reports its size.
 Results append to <out.jsonl>; a re-run skips (row, mode, run) already there, so a stopped run resumes.
 --max-usd stops the run once the summed cost reaches it (calls already in flight still finish). LLM answers vary: use --runs 5 before trusting a number.
+Any edition in the truth's family counts as right (Days Gone Remastered for Days Gone), as in run_retrieval.
+--rescore re-judges the answers already in <out.jsonl> (after a label or family change) and calls nothing.
 """
 import argparse, json, os, re, sys, threading
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +19,12 @@ from service.verify import LABELS, build_request, call, prepare_clip
 def norm(t: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", t.lower()).strip()
 
+def family_ok(truth: str, games: list[dict], families: dict[str, int]) -> set[int]:
+    """The truth's ids plus every edition in their families."""
+    ids = acceptable(truth, games)
+    roots = {families.get(str(g), g) for g in ids}
+    return ids | {int(g) for g, root in families.items() if root in roots} | roots
+
 def judge(rec: dict, answer: dict, ok: set[int], title: dict[int, str]) -> dict:
     """right = the picked candidate is the truth; own_right = game_title names the truth (counts for none/blind)."""
     pick = answer["pick"]
@@ -27,11 +35,13 @@ def judge(rec: dict, answer: dict, ok: set[int], title: dict[int, str]) -> dict:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("retrieval"); p.add_argument("shots"); p.add_argument("out")
-    p.add_argument("--mode", choices=["video", "frames", "blind"], default="video")
+    p.add_argument("--mode", choices=["video", "frames", "blind", "first"], default="video")
     p.add_argument("--runs", type=int, default=1)
     p.add_argument("--rows", help="comma-separated benchmark rows; default all")
     p.add_argument("--hard", action="store_true", help="only rows the current Prysm pipeline missed")
     p.add_argument("--games", default="data/catalog-games.json")
+    p.add_argument("--families", default="data/catalog-families.json")
+    p.add_argument("--rescore", action="store_true", help="re-judge the answers in <out> and exit; no calls")
     p.add_argument("--effort", default="low")
     p.add_argument("--max-usd", type=float, default=2.0)
     p.add_argument("--workers", type=int, default=4, help="calls in flight at once (the API allows 3,000 a minute)")
@@ -44,7 +54,20 @@ def main() -> None:
     games = json.load(open(a.games))
     title = {g["igdb_id"]: g["title"] for g in games}
     year = {g["igdb_id"]: (g.get("release_date") or "")[:4] for g in games}
+    families = json.load(open(a.families))
     recs = [json.loads(l) for l in open(a.retrieval)]
+    if a.rescore:
+        by_row = {r["row"]: r for r in recs}
+        results = [json.loads(l) for l in open(a.out)]
+        for d in results:
+            rec = by_row[d["row"]]
+            d.update(judge(rec, d["answer"], family_ok(rec["truth"], games, families), title) if d["answer"]
+                     else {"right": False, "own_right": False})
+        with open(a.out, "w") as f:
+            f.writelines(json.dumps(d) + "\n" for d in results)
+        for mode in sorted({d["mode"] for d in results}):
+            summarise(results, mode)
+        return
     if a.rows:
         keep = {int(x) for x in a.rows.split(",")}
         recs = [r for r in recs if r["row"] in keep]
@@ -69,7 +92,7 @@ def main() -> None:
             print(f"{row:>3} dry  {size:5.1f} MB  {sum(c['type'] == 'input_image' for c in parts):>2} images  "
                   f"video {os.path.getsize(clip) / 1e6:4.1f} MB  | {rec['truth'][:40]}")
             continue
-        games_ok[row] = acceptable(rec["truth"], games)
+        games_ok[row] = family_ok(rec["truth"], games, families)
         jobs += [(rec, clip, frames, cands, run) for run in range(a.runs) if (row, a.mode, run) not in done]
 
     lock = threading.Lock()
