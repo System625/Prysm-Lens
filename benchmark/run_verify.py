@@ -130,8 +130,9 @@ def main() -> None:
         summarise([json.loads(l) for l in open(a.out)], a.mode)
 
 def summarise(results: list[dict], mode: str, cap: int = 3) -> None:
-    """Per row, the majority answer over its runs (a tie or any wrong majority counts wrong); also the share of
-    single runs right, to show how much the answer moves between runs. Same 3-clips-per-game cap as retrieval."""
+    """Per row, right when most of its runs are right (runs that name the same game differently, "Elden Ring" and
+    "Elden Ring (2022)", used to split the vote); also the share of single runs right, to show how much the answer
+    moves between runs. Same 3-clips-per-game cap as retrieval."""
     by_row: dict[int, list[dict]] = {}
     for d in results:
         if d["mode"] == mode:
@@ -141,9 +142,8 @@ def summarise(results: list[dict], mode: str, cap: int = 3) -> None:
     for row in sorted(by_row):
         runs = by_row[row]
         seen[runs[0]["truth"]] += 1
-        votes = Counter(((d["answer"] or {}).get("game_title") or "", d["right"] or d["own_right"]) for d in runs)
-        (_, right), n = votes.most_common(1)[0]
-        rows.append({**runs[0], "maj_right": right and n > len(runs) / 2, "runs_right": sum(d["right"] or d["own_right"] for d in runs),
+        runs_right = sum(d["right"] or d["own_right"] for d in runs)
+        rows.append({**runs[0], "maj_right": runs_right > len(runs) / 2, "runs_right": runs_right,
                      "n_runs": len(runs), "confident_wrong": sum(1 for d in runs if not (d["right"] or d["own_right"])
                                                                  and (d["answer"] or {}).get("confidence") == "high"),
                      "capped": seen[runs[0]["truth"]] <= cap})

@@ -3,7 +3,7 @@ and show Muse Spark the Lens candidates only when it isn't sure on its own.
 
   python benchmark/score_combined.py data/baseline-26-oct.jsonl data/verify-all.jsonl data/verify-all-blind.jsonl [first.jsonl]
 
-Per row, Spark's answer is the majority over its runs, as in run_verify.summarise. A row is confidently wrong when
+Per row, Spark is right when most of its runs are, as in run_verify.summarise. A row is confidently wrong when
 the final answer is wrong and was given with confidence (Prysm's confident flag, or a high-confidence Spark majority).
 Any edition in the truth's family counts as right, for Prysm too (rescore the Spark files with run_verify --rescore).
 The optional 4th file adds Spark's "first" mode (own answer before the candidates), scored on the rows it has.
@@ -21,8 +21,8 @@ def spark_rows(path: str, mode: str | None = None) -> dict[int, dict]:
     out = {}
     for row, runs in by_row.items():
         votes = Counter(((d["answer"] or {}).get("game_title") or "", d["right"] or d["own_right"]) for d in runs)
-        (game, right), n = votes.most_common(1)[0]
-        right = right and n > len(runs) / 2
+        game = votes.most_common(1)[0][0][0]
+        right = sum(d["right"] or d["own_right"] for d in runs) > len(runs) / 2
         high = [(d["answer"] or {}).get("confidence") == "high" for d in runs]
         sure_wrong = sum(1 for d, h in zip(runs, high) if h and not (d["right"] or d["own_right"])) > len(runs) / 2
         out[row] = {"right": right, "confident_wrong": not right and sure_wrong, "sure": sum(high) > len(runs) / 2,
