@@ -201,7 +201,9 @@ def identify(clip: str, work: str, embed=cpu_embed):
 
     cands = [{"title": c["title"], "year": c["year"],
               "shots": [SHOT_URL.format(size="t_logo_med", id=s) for s in evidence[c["id"]]]} for c in items]
-    res = call(build_request(small.result(), cands, "first"), os.environ["MODEL_API_KEY"])
+    # A filmed screen: Muse Spark also gets SAM's crops, or it judges a room with a small monitor in it.
+    screen = [thumb(c, 480) for c in crops]
+    res = call(build_request(small.result(), cands, "first", screen=screen), os.environ["MODEL_API_KEY"])
     pool.shutdown(wait=False)
     usd = 0.01 + res["usd"]  # one SAM video call (50-frame minimum) + Muse Spark
     a = res["answer"] or {}

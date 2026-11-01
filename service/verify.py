@@ -18,6 +18,7 @@ PRICE_IN, PRICE_OUT = 1.25 / 1e6, 4.25 / 1e6  # USD per token, muse-spark-1.3
 CLIP_SECONDS, CLIP_HEIGHT = 60, 480
 CLIP_MAX_BYTES, SMALL_HEIGHT = 4_000_000, 360  # bigger uploads kept dying on a slow link (30 Oct): re-encode smaller
 FRAMES = 8
+SCREEN_SHOTS = 8  # SAM 3.1 screen crops shown next to the clip when it films a monitor or TV
 LABELS = "ABCDEFGHIJ"
 
 SCHEMA = {
@@ -70,14 +71,32 @@ def prepare_clip(clip: str, out: str, seconds: int = CLIP_SECONDS, height: int =
 def data_url(path: str, mime: str) -> str:
     return f"data:{mime};base64,{base64.b64encode(open(path, 'rb').read()).decode()}"
 
+def image(s: str) -> dict:
+    """An input_image from a jpg path, a public URL or a data URL."""
+    return {"type": "input_image", "image_url": s if s.startswith(("http", "data:")) else data_url(s, "image/jpeg")}
+
+def spread(items: list, n: int) -> list:
+    """n items evenly spread across the list, first and last included."""
+    if len(items) <= n:
+        return list(items)
+    return [items[round(i * (len(items) - 1) / (n - 1))] for i in range(n)]
+
 def build_request(clip: str, candidates: list[dict], mode: str = "video", frames: list[str] = (),
-                  effort: str = "low", max_output_tokens: int = 4000) -> dict:
-    """candidates: [{"title", "year", "shots": [jpg paths or public image URLs]}], at most 10, best first. Empty in blind mode."""
+                  effort: str = "low", max_output_tokens: int = 4000, screen: list[str] = ()) -> dict:
+    """candidates: [{"title", "year", "shots": [jpg paths or public image URLs]}], at most 10, best first. Empty in blind mode.
+    screen: SAM 3.1's crops of a filmed monitor or TV (jpg paths or data URLs), when the clip films one. Without
+    them Muse Spark judged the room: on a phone filming Horizon Forbidden West it saw "gameplay only on a distant
+    room monitor, no HUD legible" and named Ghost of Tsushima (1 Nov)."""
     content = [{"type": "input_text", "text": "The clip:"}]
     if mode == "frames":
-        content += [{"type": "input_image", "image_url": data_url(f, "image/jpeg")} for f in frames[:FRAMES]]
+        content += [image(f) for f in frames[:FRAMES]]
     else:
         content.append({"type": "input_video", "video_url": data_url(clip, "video/mp4")})
+    if screen:
+        content.append({"type": "input_text", "text": "The clip films a monitor or TV. These stills are that screen, cut "
+                                                      "out of the clip so the gameplay is easier to see; judge the game from "
+                                                      "them, not from the room around it:"})
+        content += [image(s) for s in spread(screen, SCREEN_SHOTS)]
     if mode == "first":
         content.append({"type": "input_text", "text": "Step 1: before reading anything below, decide which game the clip "
                                                       "shows from the clip alone. Put it in own_guess with own_confidence."})
@@ -94,8 +113,7 @@ def build_request(clip: str, candidates: list[dict], mode: str = "video", frames
         for label, c in zip(LABELS, candidates):
             name = f"{c['title']} ({c['year']})" if c.get("year") else c["title"]
             content.append({"type": "input_text", "text": f"{label}: {name}"})
-            content += [{"type": "input_image", "image_url": s if s.startswith("http") else data_url(s, "image/jpeg")}
-                        for s in c["shots"]]
+            content += [image(s) for s in c["shots"]]
         content.append({"type": "input_text", "text": "Step 2: keep own_guess as your answer unless a candidate's screenshots "
                                                       "clearly show the same game as the clip; a candidate list can be wrong, "
                                                       "so a confident own_guess that no candidate matches stays, with pick=none. "

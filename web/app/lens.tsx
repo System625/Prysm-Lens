@@ -38,7 +38,7 @@ const STAGES = [
   { key: "frames", n: "01", name: "Frames", model: "ffmpeg", what: "16 frames spread across the clip" },
   { key: "screen", n: "02", name: "Find the screen", model: "SAM 3.1", what: "Is this a phone filming a monitor or TV? Then search the screen, not the room" },
   { key: "candidates", n: "03", name: "Visual search", model: "Meta Perception Encoder", what: "Nearest of 575,973 screenshots from 87,077 games" },
-  { key: "answer", n: "04", name: "Verdict", model: "Muse Spark 1.3", what: "Watches the clip, names the game itself, then checks the candidates' screenshots" },
+  { key: "answer", n: "04", name: "Verdict", model: "Muse Spark 1.3", what: "Watches the clip (and the filmed screen, if SAM found one), names the game itself, then checks the candidates' screenshots" },
 ] as const;
 
 type Input = { file?: File; url?: string };
@@ -409,7 +409,8 @@ function Verdict({ a, candidates }: { a: Answer; candidates: Candidate[] }) {
   return (
     <div className="rise overflow-hidden rounded-2xl border border-accent/40 bg-panel">
       <div className="p-5 sm:p-6">
-        <p className="text-sm text-muted">This is</p>
+        {/* A low-confidence own answer is a guess (a filmed Horizon clip read as Ghost of Tsushima, 1 Nov): say so. */}
+        <p className="text-sm text-muted">{a.confidence === "high" ? "This is" : a.confidence === "medium" ? "Most likely" : "Best guess, not sure"}</p>
         <h2 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
           {a.game_title}
           {(a.game ?? cat)?.year && <span className="ml-2 text-xl font-normal text-faint sm:text-2xl">{(a.game ?? cat)!.year}</span>}

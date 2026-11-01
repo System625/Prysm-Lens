@@ -38,7 +38,7 @@ clip ──► frames ──► SAM 3.1 ──► Perception Encoder ──► i
 1. **Index.** Fingerprint every game's screenshots with Meta's **Perception Encoder** (PE-Core-L14-336, Apache 2.0). It does not depend on what a model happens to remember, so a game released last week is covered as soon as it has screenshots.
 2. **Crop.** Many shared clips are a phone filming a monitor or a TV. The room around the screen (desk, LED strips, the player) matches room-like games better than the game being played. **SAM 3.1** tracks "screen" through the clip's frames in one video call, and when it holds a confident screen on at least half of them, Lens fingerprints the crop instead of the room. (We first expected facecams to be the problem; masking faces measured as noise, so we looked at the misses and found filmed screens.)
 3. **Find candidates.** A nearest-neighbour search returns the top 10 games.
-4. **Check.** **Muse Spark** watches the clip, names the game from the clip alone first, then looks at each candidate's screenshots and keeps its own answer unless one of them clearly shows the same game. It cites what it saw.
+4. **Check.** **Muse Spark** watches the clip (plus SAM's crops of the screen, when the clip films one), names the game from the clip alone first, then looks at each candidate's screenshots and keeps its own answer unless one of them clearly shows the same game. It cites what it saw.
 5. **Show the evidence.** When Muse Spark keeps its own answer, Lens looks that title up in the 91,976-game catalog and shows the game's screenshots closest to the clip, so the answer can be checked by eye. (On the benchmark's 102 such answers, 52 land on the right game, 28 on the wrong game Spark named, where the screenshots show the mismatch, and 22 name no game.)
 
 ### Meta models used
@@ -47,7 +47,7 @@ clip ──► frames ──► SAM 3.1 ──► Perception Encoder ──► i
 |---|---|
 | Perception Encoder (open weights) | Visual fingerprint for screenshots and clip frames |
 | SAM 3.1 | Finds the filmed monitor / TV / phone in a clip and crops the frames to it |
-| Muse Spark 1.3 | Watches the clip (video and audio), names the game, checks it against the candidates, with evidence |
+| Muse Spark 1.3 | Watches the clip (video and audio, plus the screen crops), names the game, checks it against the candidates, with evidence |
 
 ## Benchmark
 
@@ -74,6 +74,8 @@ We publish the **clip links and labels only** ([benchmark/clips.tsv](benchmark/c
 Lens helps where it was meant to: on clips the caption pipeline misses, Muse Spark names 13 of 19 with the candidates and 12 without. Shown a candidate list straight away, it sometimes trades a right answer of its own for a wrong candidate (15 confidently wrong vs 7). So the shipped prompt has it name the game from the clip first and keep that answer unless a candidate's screenshots clearly show the same game: one call, hard 13 of 19, and only one confident mistake there. Four hard clips are ones Prysm answers confidently and wrongly, so the cascade never reaches them; with no game counted more than 3 times (86 clips), the cascade gets 74 to Prysm's 73. Those, and the 19-clip sample, are the open problems. About $27 for all 1,560 Muse Spark calls, plus $1.09 for SAM on every clip.
 
 Before the SAM crop, own-answer-first scored 76 and the cascade 90 (73 with the cap). The crop's end-to-end gain is small because Muse Spark already knows the big games in those filmed clips from the video; it matters in retrieval, which is what covers the long tail Spark doesn't know.
+
+**Showing Muse Spark the screen crops too (1 Nov).** Until then the crops only went to the search, and Spark judged the room: on a phone filming Horizon Forbidden West it said "gameplay is only seen on a distant room monitor" and named Ghost of Tsushima. Now, when SAM finds a screen, Spark also gets up to 8 crops after the clip. On the 8 filmed-screen clips (the 7 above plus that one, row 124), 5 runs each: single runs right **26 of 35 → 33 of 34** (Assassin's Creed Valhalla 4 → 5, Call of Duty: Mobile 3 → 5, Resident Evil 4 4 → 5, no clip worse), majority-right clips unchanged at 6 of 7. Still wrong: row 98 (the monitor is ~160 px wide) and row 124, which moved from Ghost of Tsushima at low confidence (4 of 5) to Horizon Zero Dawn Remastered, right series but wrong game, in 2 of 5. Clips with no filmed screen get exactly the request they got before, so the table above stands for them.
 
 ## What is new in this repo
 

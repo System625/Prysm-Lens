@@ -13,7 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from benchmark.run_retrieval import acceptable
-from service.search import extract_frames
+from service.search import extract_frames, keep_frames
+from service.screen import crop_to_screen, find_screen
 from service.verify import LABELS, build_request, call, prepare_clip
 
 def norm(t: str) -> str:
@@ -32,6 +33,24 @@ def judge(rec: dict, answer: dict, ok: set[int], title: dict[int, str]) -> dict:
     own = norm(answer["game_title"]) in {norm(title[g]) for g in ok if g in title}
     return {"pick_id": gid, "right": gid in ok if gid else False, "own_right": own}
 
+def screen_crops(row: int) -> list[str]:
+    """The service's screen crops for a benchmark clip (same 16 frames, same blank-frame drop, same SAM rule),
+    saved as jpgs the way service/app.py sends them (<= 480 px tall, quality 70). [] when no screen is filmed."""
+    every = extract_frames(f"data/clips/{row}.mp4", f"data/frames/{row}")
+    keep = keep_frames(every)
+    boxes = find_screen(every, f"data/sam/{row}.json", keep)
+    if not boxes:
+        return []
+    out = []
+    for i, im in enumerate(crop_to_screen([every[k] for k in keep], boxes)):
+        f = f"data/screen-crops/{row}/{i:02d}.jpg"
+        if not os.path.exists(f):
+            os.makedirs(os.path.dirname(f), exist_ok=True)
+            im.thumbnail((960, 480))
+            im.save(f, "JPEG", quality=70)
+        out.append(f)
+    return out
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("retrieval"); p.add_argument("shots"); p.add_argument("out")
@@ -46,6 +65,9 @@ def main() -> None:
     p.add_argument("--max-usd", type=float, default=2.0)
     p.add_argument("--workers", type=int, default=4, help="calls in flight at once (the API allows 3,000 a minute)")
     p.add_argument("--live", action="store_true")
+    p.add_argument("--screen", action="store_true",
+                   help="as the service does: when SAM 3.1 finds a filmed screen (cached data/sam/<row>.json), show "
+                        "Muse Spark its crops next to the clip")
     a = p.parse_args()
     key = os.environ.get("MODEL_API_KEY")
     if a.live and not key:
@@ -85,31 +107,32 @@ def main() -> None:
             {"title": title.get(g, str(g)), "year": year.get(g), "shots": [f"{a.shots}/{s}.jpg" for s in rec["evidence"][str(g)]
                                                                           if os.path.exists(f"{a.shots}/{s}.jpg")]}
             for g in rec["top_ids"]]
+        screen = screen_crops(row) if a.screen else []
         if not a.live:
-            body = build_request(clip, cands, a.mode, frames, a.effort)
+            body = build_request(clip, cands, a.mode, frames, a.effort, screen=screen)
             parts = body["input"][0]["content"]
             size = len(json.dumps(body)) / 1e6
             print(f"{row:>3} dry  {size:5.1f} MB  {sum(c['type'] == 'input_image' for c in parts):>2} images  "
                   f"video {os.path.getsize(clip) / 1e6:4.1f} MB  | {rec['truth'][:40]}")
             continue
         games_ok[row] = family_ok(rec["truth"], games, families)
-        jobs += [(rec, clip, frames, cands, run) for run in range(a.runs) if (row, a.mode, run) not in done]
+        jobs += [(rec, clip, frames, cands, screen, run) for run in range(a.runs) if (row, a.mode, run) not in done]
 
     lock = threading.Lock()
     def work(job):
         """One call, on a worker thread. The request is built here, not up front: 500 bodies of 3-8 MB won't fit in RAM."""
         nonlocal spent
-        rec, clip, frames, cands, run = job
+        rec, clip, frames, cands, screen, run = job
         with lock:
             if spent >= a.max_usd:
                 return rec, run, None, f"skipped: spent ${spent:.2f} of --max-usd {a.max_usd}"
         try:
-            res = call(build_request(clip, cands, a.mode, frames, a.effort), key)
+            res = call(build_request(clip, cands, a.mode, frames, a.effort, screen=screen), key)
         except RuntimeError as e:
             return rec, run, None, f"ERROR {e}"
         with lock:
             spent += res["usd"]
-        return rec, run, res, None
+        return rec, run, {**res, "screen": len(screen)}, None
 
     with ThreadPoolExecutor(a.workers) as pool:
         for rec, run, res, err in pool.map(work, jobs):
