@@ -17,6 +17,7 @@ type Answer = {
   confidence?: string;
   evidence?: string;
   game?: { id: number; title: string; year: string | null; shots: string[] } | null;
+  catalog?: { id: number; title: string; year: string | null; shots: string[] } | null;  // pick=none: its own answer, looked up
   error?: string | null;
 };
 type Run = {
@@ -397,20 +398,31 @@ function body(key: string, run: Run, preview: string | null) {
 function Verdict({ a, candidates }: { a: Answer; candidates: Candidate[] }) {
   if (!a.game_title) return <div className="rounded-2xl border border-line bg-panel p-5 text-muted">Muse Spark couldn&apos;t give an answer{a.error ? `: ${a.error}` : "."}</div>;
   const tone = a.confidence === "high" ? "text-ok" : a.confidence === "medium" ? "text-warn" : "text-bad";
-  const shots = a.game?.shots ?? [];
   const fromLens = !!a.game;
   const rank = fromLens ? candidates.findIndex((c) => c.id === a.game!.id) + 1 : 0;
+  const cat = fromLens ? null : a.catalog;
+  const shots = a.game?.shots ?? cat?.shots ?? [];
   return (
     <div className="rise overflow-hidden rounded-2xl border border-accent/40 bg-panel">
       <div className="p-5 sm:p-6">
         <p className="text-sm text-muted">This is</p>
-        <h2 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">{a.game_title}</h2>
+        <h2 className="mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
+          {a.game_title}
+          {(a.game ?? cat)?.year && <span className="ml-2 text-xl font-normal text-faint sm:text-2xl">{(a.game ?? cat)!.year}</span>}
+        </h2>
         <p className="mt-2 text-sm">
           <span className={tone}>{a.confidence} confidence</span>
           <span className="text-faint"> · {fromLens ? `confirmed against search result #${rank}` : "Muse Spark's own answer; none of the search results matched"}</span>
         </p>
         {a.evidence && <p className="mt-4 border-l-2 border-accent pl-3 text-sm text-muted">{a.evidence}</p>}
       </div>
+      {cat && (
+        <p className="border-t border-line px-5 py-2.5 text-xs text-faint sm:px-6">
+          {cat.shots.length
+            ? `Looked up in the catalog: ${cat.title}'s screenshots closest to your clip. Muse Spark didn't match them to a search result, so compare by eye.`
+            : `${cat.title} is in the catalog, but IGDB has no screenshots of it, so visual search could never have found it.`}
+        </p>
+      )}
       {shots.length > 0 && (
         <div className="grid grid-cols-3 gap-0.5">
           {shots.map((s) => <img key={s} src={s} alt="" className="aspect-video w-full object-cover" />)}

@@ -7,7 +7,10 @@ The response is NDJSON, one event per line, so the web demo can draw each stage 
   {"stage": "frames",     "frames": [jpeg data URLs], "skipped": flat frames left out}
   {"stage": "screen",     "found": bool, "boxes": {frame: [x1,y1,x2,y2] as 0..1}, "crops": [jpeg data URLs]}
   {"stage": "candidates", "items": [{"id", "title", "year", "score", "editions", "shots": [IGDB image URLs]}]}
-  {"stage": "answer",     "own_guess", "pick", "game_title", "confidence", "evidence", "game": {...} | null}
+  {"stage": "answer",     "own_guess", "pick", "game_title", "confidence", "evidence", "game": {...} | null,
+                          "catalog": {...} | null}
+    game = the search candidate Muse Spark picked. catalog = with pick "none", the catalog entry its own answer
+    names (year + that game's screenshots closest to the clip), so the answer can be checked by eye.
   {"stage": "done",       "ms": {...}, "usd": float}
   {"stage": "error",      "message": str}
 
@@ -18,7 +21,7 @@ Env: MODEL_API_KEY (Meta Model API), LENS_DATA (folder with the index + catalog,
 LENS_INDEX (index base name, default index-q8), LENS_DAILY_CAP (identify calls per UTC day, default 400:
 each costs about $0.03 of Meta credit, so a public demo can't drain it).
 """
-import base64, io, json, os, subprocess, tempfile, threading, time
+import base64, io, json, os, re, subprocess, tempfile, threading, time, unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import numpy as np, torch
@@ -55,7 +58,7 @@ torch.set_num_threads(THREADS)
 app = FastAPI(title="Prysm Lens")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-state = {"index": None, "model": None, "games": None, "day": None, "count": 0}
+state = {"index": None, "model": None, "games": None, "titles": None, "indexed": None, "day": None, "count": 0}
 busy = threading.Semaphore(2)  # the encoder and the 2.4 GB search are CPU-bound; queue the rest
 
 loading = threading.Lock()
@@ -65,8 +68,43 @@ def load():
         if state["index"] is None:
             state["games"] = {g["igdb_id"]: g for g in json.load(open(f"{DATA}/catalog-games.json"))}
             state["model"] = load_model()
-            state["index"] = Index(f"{DATA}/{INDEX}", f"{DATA}/catalog-games.json", f"{DATA}/catalog-families.json")
+            index = Index(f"{DATA}/{INDEX}", f"{DATA}/catalog-games.json", f"{DATA}/catalog-families.json")
+            state["indexed"] = set(np.unique(index.games).tolist())
+            state["titles"] = title_table(state["games"].values(), state["indexed"])
+            state["index"] = index
     return state["index"], state["model"], state["games"]
+
+def title_table(games, indexed: set[int]) -> dict[str, list[dict]]:
+    """Normalised title -> the games with it (remakes share the original's title: Resident Evil 4 is three games).
+    Games with screenshots in the index first, then the most-rated."""
+    by: dict[str, list[dict]] = {}
+    for g in sorted(games, key=lambda g: (g["igdb_id"] not in indexed, -(g.get("total_rating_count") or 0))):
+        by.setdefault(title_key(g["title"]), []).append(g)
+    return by
+
+def title_key(t: str) -> str:
+    t = unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode().lower().replace("&", " and ")  # Ragnarök
+    t = re.sub(r"\((19|20)\d\d\)", " ", t)  # "Elden Ring (2022)"
+    return re.sub(r"^the ", "", re.sub(r"[^a-z0-9]+", " ", t).strip())
+
+NOT_A_TITLE = re.compile(r"^\s*(unknown|unidentified|unclear|none|n/a|not\b|no\b)", re.I)
+
+def lookup(title: str) -> dict | None:
+    """The catalog game Muse Spark's own answer names, or None. A shared title (Resident Evil 4 is three games)
+    gives the most-rated one, or the newest when the answer says remake/remaster: screenshot similarity can't tell
+    them apart on a filmed screen (row 111, the 2023 remake, sits closer to the 2011 HD release).
+    On the benchmark's 102 pick=none answers: 52 land on the right game, 28 on the (wrong) game Spark named,
+    22 name none ("Unknown - no gameplay visible") or a spelling the catalog lacks ("Phantom Blade 0")."""
+    if not title or NOT_A_TITLE.match(title):
+        return None
+    tries = (title, re.sub(r"\([^)]*\)", " ", title), title.split(" / ")[0],  # "(Shutoko mod)", "A / B"
+             re.sub(r"\s+(remake|remastered|remaster)\b.*$", "", title, flags=re.I))
+    named = next((state["titles"][k] for k in map(title_key, tries) if k and k in state["titles"]), [])
+    if not named:
+        return None
+    if re.search(r"\b(remake|remastered|remaster)\b", title, re.I):
+        return max(named, key=lambda g: g.get("release_date") or "")
+    return named[0]
 
 @app.on_event("startup")
 def warm():
@@ -169,8 +207,13 @@ def identify(clip: str, work: str, embed=cpu_embed):
     a = res["answer"] or {}
     pick = a.get("pick")
     game = items[LABELS.index(pick)] if pick and pick != "none" and LABELS.index(pick) < len(items) else None
+    catalog = None
+    if game is None and (g := lookup(a.get("game_title", ""))):
+        shots = index.evidence(query, g["igdb_id"]) if g["igdb_id"] in state["indexed"] else []  # Rerouted has none
+        catalog = {"id": g["igdb_id"], "title": g["title"], "year": (g.get("release_date") or "")[:4] or None,
+                   "shots": [SHOT_URL.format(size="t_screenshot_med", id=s) for s in shots]}
     yield {"stage": "answer", **a, "game": game and {k: game[k] for k in ("id", "title", "year", "shots")},
-           "error": res.get("error")}
+           "catalog": catalog, "error": res.get("error")}
     ms["spark"] = int((time.time() - t) * 1000)
     yield {"stage": "done", "ms": ms, "usd": round(usd, 4)}
 
