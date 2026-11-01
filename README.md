@@ -4,6 +4,8 @@
 
 Prysm Lens is a "Shazam for games". Give it a short gameplay video, such as a TikTok, a Reel or a YouTube Short, and it tells you which game it is and shows the evidence. It does not need the caption to name the game.
 
+**Try it: [prysm-lens.vercel.app](https://prysm-lens.vercel.app)** (upload a clip, paste a link, or point your phone at a screen).
+
 It is built for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/meta-ai-developer-hackathon) (26 Oct – 4 Nov 2026), Indie track, problem statement **Build for Your World**.
 
 ---
@@ -36,9 +38,8 @@ clip ──► frames ──► SAM 3.1 ──► Perception Encoder ──► i
 1. **Index.** Fingerprint every game's screenshots with Meta's **Perception Encoder** (PE-Core-L14-336, Apache 2.0). It does not depend on what a model happens to remember, so a game released last week is covered as soon as it has screenshots.
 2. **Crop.** Many shared clips are a phone filming a monitor or a TV. The room around the screen (desk, LED strips, the player) matches room-like games better than the game being played. **SAM 3.1** tracks "screen" through the clip's frames in one video call, and when it holds a confident screen on at least half of them, Lens fingerprints the crop instead of the room. (We first expected facecams to be the problem; masking faces measured as noise, so we looked at the misses and found filmed screens.)
 3. **Find candidates.** A nearest-neighbour search returns the top 10 games.
-4. **Check.** **Muse Spark** watches the clip alongside each candidate's screenshots and picks the right game, citing what it saw. It can also decide that none of them match.
-5. **Listen.** **Muse Voice Transcribe**, biased toward the candidate titles, catches a streamer saying the game's name out loud.
-6. **Learn.** Every clip a user confirms adds its frames to the index.
+4. **Check.** **Muse Spark** watches the clip, names the game from the clip alone first, then looks at each candidate's screenshots and keeps its own answer unless one of them clearly shows the same game. It cites what it saw.
+5. **Show the evidence.** When Muse Spark keeps its own answer, Lens looks that title up in the 91,976-game catalog and shows the game's screenshots closest to the clip, so the answer can be checked by eye. (On the benchmark's 102 such answers, 52 land on the right game, 28 on the wrong game Spark named, where the screenshots show the mismatch, and 22 name no game.)
 
 ### Meta models used
 
@@ -46,9 +47,7 @@ clip ──► frames ──► SAM 3.1 ──► Perception Encoder ──► i
 |---|---|
 | Perception Encoder (open weights) | Visual fingerprint for screenshots and clip frames |
 | SAM 3.1 | Finds the filmed monitor / TV / phone in a clip and crops the frames to it |
-| Muse Spark 1.3 | Watches the clip next to the candidates and picks one, with evidence |
-| Muse Voice Transcribe | Catches spoken game names, with keyword biasing |
-| Muse Glimmer (to be tested) | Its vision encoder as an alternative fingerprinter |
+| Muse Spark 1.3 | Watches the clip (video and audio), names the game, checks it against the candidates, with evidence |
 
 ## Benchmark
 
@@ -84,24 +83,21 @@ The hackathon only counts work built during the event. Here is the split:
 |---|---|
 | Screenshot index and the indexing pipeline | The Prysm app (iOS / Android) |
 | SAM 3.1 screen crop | Prysm's text-based share pipeline (the 81% baseline) |
-| Search service | The game catalog Lens indexes against |
-| Muse Spark verification step | |
-| Voice step | |
+| Search service (Hugging Face ZeroGPU Space) | The game catalog Lens indexes against |
+| Muse Spark verification step and the catalog lookup | |
 | The benchmark harness and results | |
 | The web demo | |
-| The hook that lets Prysm call Lens | |
 
-Prysm's backend stays private. Everything Lens adds, including the code that connects it to Prysm, is in this repo.
+Prysm's backend stays private and Lens is not wired into it yet. Everything built for Lens is in this repo.
 
 ## Repo layout
 
 ```
 Prysm-Lens/
   indexer/       Python, run locally: fingerprints game screenshots into the index
-  service/       Modal app: the search API, plus the SAM 3.1 and Muse Spark calls
+  service/       the pipeline (frames, SAM 3.1, search, Muse Spark) as a ZeroGPU Gradio Space, or a FastAPI NDJSON service
   web/           Next.js demo site (Vercel): paste a link, upload a clip, or use your camera
   benchmark/     clip links + labels, the scoring script, results
-  integrations/  the call Prysm's share pipeline makes to Lens
 ```
 
 The web demo shows every stage, not only the answer: the frames it pulled out, the screen SAM 3.1 found and the crop Lens searched with, the top candidates with their matching screenshots, and Muse Spark's pick with its reasoning. On a phone, the camera mode lets you point it at a TV.
@@ -113,13 +109,15 @@ The web demo shows every stage, not only the answer: the frames it pulled out, t
 - [x] Muse Spark on the video alone (no index), same clips
 - [x] Perception Encoder index plus a recall@10 check (72 of 104 in the top 10)
 - [x] SAM 3.1 screen crop (top 10: 72 → 75 of 104)
-- [ ] Full pipeline vs baseline, on all clips and on the hard subset
-- [ ] Search service deployed
-- [ ] Web demo live
-- [ ] Prysm integration and demo
+- [x] Full pipeline vs baseline, on all clips and on the hard subset
+- [x] Search service deployed (Hugging Face ZeroGPU Space)
+- [x] Web demo live: [prysm-lens.vercel.app](https://prysm-lens.vercel.app)
+- [ ] Demo video
+
+Not built, and next: Muse Voice Transcribe for streamers who say the game's name, wiring Lens into Prysm's share pipeline, adding confirmed clips to the index, and testing Muse Glimmer's vision encoder as the fingerprinter.
 
 ## Team
 
-Lens is built by **Tunde-Ajayi Olamiposi**: the recognition pipeline, the search service, the web demo, the benchmark and the Prysm integration.
+Lens is built by **Tunde-Ajayi Olamiposi**: the recognition pipeline, the search service, the web demo and the benchmark.
 
 The Prysm app it plugs into is the existing work of the wider Prysm team.
