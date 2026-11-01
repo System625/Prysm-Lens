@@ -72,7 +72,7 @@ def data_url(path: str, mime: str) -> str:
 
 def build_request(clip: str, candidates: list[dict], mode: str = "video", frames: list[str] = (),
                   effort: str = "low", max_output_tokens: int = 4000) -> dict:
-    """candidates: [{"title", "year", "shots": [jpg paths]}], at most 10, best first. Empty in blind mode."""
+    """candidates: [{"title", "year", "shots": [jpg paths or public image URLs]}], at most 10, best first. Empty in blind mode."""
     content = [{"type": "input_text", "text": "The clip:"}]
     if mode == "frames":
         content += [{"type": "input_image", "image_url": data_url(f, "image/jpeg")} for f in frames[:FRAMES]]
@@ -94,7 +94,8 @@ def build_request(clip: str, candidates: list[dict], mode: str = "video", frames
         for label, c in zip(LABELS, candidates):
             name = f"{c['title']} ({c['year']})" if c.get("year") else c["title"]
             content.append({"type": "input_text", "text": f"{label}: {name}"})
-            content += [{"type": "input_image", "image_url": data_url(s, "image/jpeg")} for s in c["shots"]]
+            content += [{"type": "input_image", "image_url": s if s.startswith("http") else data_url(s, "image/jpeg")}
+                        for s in c["shots"]]
         content.append({"type": "input_text", "text": "Step 2: keep own_guess as your answer unless a candidate's screenshots "
                                                       "clearly show the same game as the clip; a candidate list can be wrong, "
                                                       "so a confident own_guess that no candidate matches stays, with pick=none. "

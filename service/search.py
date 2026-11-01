@@ -46,7 +46,12 @@ class Index:
     def __init__(self, base: str, games_path: str | None = None, families_path: str | None = None):
         """<base>-hub.npy (from indexer/hub_scores.py), games_path's rating counts and families_path
         (from indexer/list_families.py) are each optional; without them ranking is the plain vote per game."""
-        self.vecs = np.load(f"{base}.npy").astype(np.float32)
+        self.vecs = np.load(f"{base}.npy")
+        if self.vecs.dtype == np.int8:  # indexer/quantize.py: int8 per row + a per-row scale; half the bytes of fp16
+            self.vecs = self.vecs.astype(np.float32)
+            self.vecs *= np.load(f"{base}-scale.npy")[:, None]  # in place: one 2.4 GB array, not two
+        else:
+            self.vecs = self.vecs.astype(np.float32)
         self.rows = json.load(open(f"{base}.json"))
         self.games = np.array([r["game"] for r in self.rows])
         self.hub = np.load(f"{base}-hub.npy") if os.path.exists(f"{base}-hub.npy") else None

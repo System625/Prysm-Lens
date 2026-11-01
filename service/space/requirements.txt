@@ -1,0 +1,10 @@
+open_clip_torch==3.3.0
+timm==1.0.30
+numpy
+pillow
+requests
+fastapi==0.162.0
+uvicorn==0.54.0
+python-multipart
+huggingface_hub
+yt-dlp
