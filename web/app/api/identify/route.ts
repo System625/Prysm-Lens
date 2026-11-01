@@ -9,7 +9,34 @@ const SPACE = process.env.NEXT_PUBLIC_LENS_SPACE ?? "System625/prysm-lens-gpu";
 
 export const maxDuration = 300;
 
+// Client.connect first asks huggingface.co where the Space lives. That lookup sometimes fails once ("Space metadata
+// could not be loaded", seen 1 Nov on a clip the live site then named fine), and one failure used to end the run.
+// Nothing has run on the GPU yet at this point, so retrying costs no quota.
+async function connectWithRetry(token: `hf_${string}` | undefined, tries = 3) {
+  for (let i = 1; ; i++) {
+    try {
+      return await Client.connect(SPACE, { ...(token ? { token } : {}), events: ["data", "status"] });  // without status, errors end the stream silently
+    } catch (err) {
+      if (i >= tries || /could not be accessed|401|not authorized/i.test((err as Error).message)) throw err;
+      await new Promise((r) => setTimeout(r, 1000 * i));
+    }
+  }
+}
+
 type Body = { path?: unknown; name?: unknown; url?: unknown };
+
+// "Open in Prysm": the app opens a game from prysm://game/<games.id>, but Lens names games by IGDB id. lookup/prysm-ids.json
+// maps every game in Lens's catalog (91,976, all of them) to its Prysm id; exported 1 Nov from Shelf's games table, where
+// igdb_id is unique. Loaded on the first answer only, so runs that fail early never pay for the 4.4 MB.
+let prysmIds: Promise<Record<string, string>> | null = null;
+async function withPrysmId(e: unknown) {
+  const a = e as { stage?: string; game?: { id?: number } | null; catalog?: { id?: number } | null };
+  const igdb = a?.stage === "answer" ? (a.game ?? a.catalog)?.id : undefined;
+  if (igdb == null) return e;
+  prysmIds ??= import("@/lookup/prysm-ids.json").then((m) => m.default as Record<string, string>);
+  const id = (await prysmIds)[String(igdb)];
+  return id ? { ...a, prysm_id: id } : e;
+}
 
 export async function POST(req: Request) {
   const { path, name, url } = (await req.json().catch(() => ({}))) as Body;
@@ -23,14 +50,14 @@ export async function POST(req: Request) {
     async start(ctrl) {
       const send = (e: unknown) => ctrl.enqueue(enc.encode(JSON.stringify(e) + "\n"));
       try {
-        const app = await Client.connect(SPACE, { ...(token ? { token } : {}), events: ["data", "status"] });  // without status, errors end the stream silently
+        const app = await connectWithRetry(token);
         const video = file ? { path: file, orig_name: typeof name === "string" ? name : undefined, meta: { _type: "gradio.FileData" } } : null;
         const job = app.submit("/identify", { video, url: link });
         let seen = 0;
         for await (const msg of job) {
           if (msg.type === "data") {
             const events = (msg.data as unknown[])[0] as unknown[];  // the list so far; send only new ones
-            for (const e of events.slice(seen)) send(e);
+            for (const e of events.slice(seen)) send(await withPrysmId(e));
             seen = events.length;
           } else if (msg.type === "status" && msg.stage === "error") {
             send({ stage: "error", message: typeof msg.message === "string" && msg.message ? msg.message : "The Space returned an error." });

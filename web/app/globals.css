@@ -1,19 +1,31 @@
 @import "tailwindcss";
 
+/*
+ * Prysm's look: the mobile app's palette (revenue-cat-game src/shared/theme/theme.ts) and the landing page's
+ * treatments (prysm-web src/app/(home)/home.css: Nunito, the wordmark's sticker outline, tactile buttons, stickers).
+ */
 :root {
   color-scheme: dark;
-  --bg: #0a0a0b;
-  --panel: #121214;
-  --panel-2: #1a1a1d;
-  --fg: #f5f5f4;
-  --muted: #9b9ba3;
-  --faint: #66666e;
-  --line: rgba(255, 255, 255, 0.08);
-  --accent: #ff5a1f;
-  --accent-soft: rgba(255, 90, 31, 0.14);
-  --ok: #3fbe7c;
-  --warn: #f2b84b;
-  --bad: #f0645f;
+  --bg: #090909;            /* colors.background */
+  --panel: #141110;         /* landing --pr-panel */
+  --panel-2: #1d1817;       /* landing --pr-panel-2 */
+  --fg: #f7f3f0;            /* landing --pr-ink */
+  --title: #e1d9d4;         /* discoverColors.titleText */
+  --muted: #bcb4ae;         /* landing --pr-muted */
+  --faint: #8f8782;         /* landing --pr-subtle */
+  --line: rgba(255, 255, 255, 0.1);
+  --accent: #fd5021;        /* colors.accent */
+  --accent-lip: #b2330e;    /* the button's lip */
+  --accent-soft: rgba(253, 80, 33, 0.16); /* colors.accentMuted */
+  --ember: #49170a;         /* heroGradient[1] */
+  --pill: rgba(255, 255, 255, 0.1); /* discoverColors.pillBg */
+  /* statusColors: playing / backlog / dropped */
+  --gold: #fed897; --gold-ink: #7c2b08;
+  --bone: #ebeae9; --bone-ink: #615048;
+  --rose: #f7d8dc; --rose-ink: #7c1d33;
+  --ok: #3fbe7c;            /* colors.success */
+  --warn: #fed897;
+  --bad: #f0645f;           /* colors.danger */
 }
 
 @theme inline {
@@ -21,22 +33,71 @@
   --color-panel: var(--panel);
   --color-panel-2: var(--panel-2);
   --color-fg: var(--fg);
+  --color-title: var(--title);
   --color-muted: var(--muted);
   --color-faint: var(--faint);
   --color-line: var(--line);
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
+  --color-pill: var(--pill);
+  --color-gold: var(--gold);
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-bad: var(--bad);
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
+  --font-sans: var(--font-nunito), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 html, body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); }
 ::selection { background: var(--accent); color: white; }
 
+/* The app's library header: an orange glow fading down into the page. */
+.glow {
+  background:
+    radial-gradient(90% 55% at 50% -12%, rgba(253, 80, 33, 0.34), rgba(73, 23, 10, 0.22) 45%, transparent 75%),
+    radial-gradient(30% 25% at 78% 8%, rgba(254, 216, 151, 0.1), transparent 70%);
+}
+
+/* The wordmark's treatment: white letters, a fat orange outline, a hard ember shadow. */
+.display {
+  display: block; font-weight: 1000; line-height: 0.95; letter-spacing: -0.012em; color: #fff;
+  -webkit-text-stroke: 0.15em var(--accent); paint-order: stroke fill; text-shadow: 0 0.085em 0 var(--ember);
+}
+
+/* Tactile button: a lip underneath that the button sinks into. */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; min-height: 52px; padding: 0 1.75rem;
+  border-radius: 14px; font-size: 1.0625rem; font-weight: 900; color: #fff; background: var(--accent);
+  box-shadow: 0 5px 0 var(--accent-lip); cursor: pointer; transition: transform 80ms ease, box-shadow 80ms ease, filter 150ms ease;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--accent-lip); }
+.btn:disabled { cursor: default; filter: saturate(0.5) brightness(0.7); transform: translateY(2px); box-shadow: 0 3px 0 var(--accent-lip); }
+.btn:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+
+/* Stickers: the landing's status labels, white rim and a slight tilt. */
+.sticker {
+  display: inline-block; padding: 0.3em 0.75em; border-radius: 999px; font-size: 0.75rem; font-weight: 900; line-height: 1.15;
+  white-space: nowrap; box-shadow: 0 0 0 2px #fff, 0 6px 12px rgba(0, 0, 0, 0.4); transform: rotate(-3deg);
+}
+.sticker--orange { background: var(--accent); color: #fff; }
+.sticker--gold { background: var(--gold); color: var(--gold-ink); }
+.sticker--bone { background: var(--bone); color: var(--bone-ink); }
+.sticker--rose { background: var(--rose); color: var(--rose-ink); }
+.sticker--dark { background: #111; color: #fff; }
+.sticker--flat { box-shadow: none; transform: none; }
+
+/* Numbered step: the landing's orange counter disc. */
+.step-num {
+  display: grid; place-items: center; width: 2.25rem; height: 2.25rem; flex-shrink: 0; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 1rem; font-weight: 1000; box-shadow: 0 3px 0 var(--accent-lip);
+}
+.step-num--idle { background: var(--panel-2); color: var(--faint); box-shadow: 0 3px 0 #000; }
+
 @keyframes pulse-dot { 0%, 100% { opacity: 0.35 } 50% { opacity: 1 } }
 .pulse { animation: pulse-dot 1.1s ease-in-out infinite; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
 .rise { animation: rise 0.35s ease-out both; }
+@keyframes pop { from { opacity: 0; transform: translateY(10px) scale(0.98) } to { opacity: 1; transform: none } }
+.pop { animation: pop 0.45s cubic-bezier(0.2, 0.85, 0.25, 1.06) both; }
+@media (prefers-reduced-motion: reduce) { .pulse, .rise, .pop { animation: none; } .btn:active { transform: none; } }
