@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Client, handle_file } from "@gradio/client";
 
-const API = process.env.NEXT_PUBLIC_LENS_API ?? "https://system625-prysm-lens.hf.space";
+// Default: the ZeroGPU Space through Gradio's client. Set NEXT_PUBLIC_LENS_API to use the NDJSON service instead
+// (the CPU Docker Space, or `uvicorn service.app:app` on a laptop).
+const SPACE = process.env.NEXT_PUBLIC_LENS_SPACE ?? "System625/prysm-lens-gpu";
+const API = process.env.NEXT_PUBLIC_LENS_API;
 
 type Candidate = { id: number; title: string; year: string | null; score: number; editions: number[]; shots: string[] };
 type Answer = {
@@ -34,7 +38,37 @@ const STAGES = [
   { key: "answer", n: "04", name: "Verdict", model: "Muse Spark 1.3", what: "Watches the clip, names the game itself, then checks the candidates' screenshots" },
 ] as const;
 
-async function stream(body: FormData, onEvent: (e: Record<string, unknown>) => void) {
+type Input = { file?: File; url?: string };
+type OnEvent = (e: Record<string, unknown>) => void;
+
+let gradio: Promise<Client> | null = null;
+const connect = () => (gradio ??= Client.connect(SPACE).catch((e) => { gradio = null; throw e; }));
+
+async function streamGradio(input: Input, onEvent: OnEvent) {
+  const app = await connect();
+  const job = app.submit("/identify", { video: input.file ? handle_file(input.file) : null, url: input.url ?? "" });
+  let seen = 0;
+  for await (const msg of job) {
+    if (msg.type === "data") {
+      const events = (msg.data as unknown[])[0] as Record<string, unknown>[];  // the list so far; send only new ones
+      for (const e of events.slice(seen)) onEvent(e);
+      seen = events.length;
+    } else if (msg.type === "status" && msg.stage === "error") {
+      const m = typeof msg.message === "string" ? msg.message : "";
+      throw new Error(/quota|ZeroGPU/i.test(m) ? `The free GPU quota for your connection is used up for today. ${m}` : m || "The Space returned an error.");
+    }
+  }
+}
+
+function stream(input: Input, onEvent: OnEvent) {
+  if (!API) return streamGradio(input, onEvent);
+  const body = new FormData();
+  if (input.file) body.append("file", input.file);
+  if (input.url) body.append("url", input.url);
+  return streamNdjson(body, onEvent);
+}
+
+async function streamNdjson(body: FormData, onEvent: OnEvent) {
   const res = await fetch(`${API}/identify`, { method: "POST", body });
   if (!res.ok || !res.body) {
     const j = await res.json().catch(() => ({ error: `${res.status} ${res.statusText}` }));
@@ -68,6 +102,12 @@ export default function Lens() {
     let stop = false;
     const ping = async () => {
       try {
+        if (!API) {
+          setAwake("waking");
+          await connect();
+          if (!stop) setAwake("ready");
+          return;
+        }
         const r = await fetch(`${API}/`, { cache: "no-store" });
         const j = await r.json();
         if (!stop) setAwake(j.loaded ? "ready" : "waking");
@@ -86,13 +126,13 @@ export default function Lens() {
     return () => clearInterval(t);
   }, [busy]);
 
-  async function go(body: FormData, videoUrl: string | null) {
+  async function go(input: Input, videoUrl: string | null) {
     setPreview(videoUrl);
     const started = Date.now();
     setRun({ started, at: {} });
     setBusy(true);
     try {
-      await stream(body, (e) => {
+      await stream(input, (e) => {
         const stage = e.stage as string;
         setRun((r) => {
           if (!r) return r;
@@ -115,9 +155,7 @@ export default function Lens() {
 
   function submitFile(f: File) {
     if (f.size > 200e6) return setRun({ started: Date.now(), at: {}, error: "That video is over 200 MB." });
-    const body = new FormData();
-    body.append("file", f);
-    go(body, URL.createObjectURL(f));
+    go({ file: f }, URL.createObjectURL(f));
   }
 
   return (
@@ -142,13 +180,13 @@ export default function Lens() {
         <div className="mb-4 flex gap-1 rounded-xl bg-panel-2 p-1 text-sm">
           {(["upload", "link", "camera"] as const).map((t) => (
             <button key={t} onClick={() => setTab(t)} disabled={busy}
-              className={`flex-1 rounded-lg px-3 py-2 capitalize transition ${tab === t ? "bg-bg text-fg" : "text-muted hover:text-fg"}`}>
+              className={`flex-1 rounded-lg px-3 py-2 transition ${tab === t ? "bg-bg text-fg" : "text-muted hover:text-fg"}`}>
               {t === "upload" ? "Upload a clip" : t === "link" ? "Paste a link" : "Point your camera"}
             </button>
           ))}
         </div>
         {tab === "upload" && <Upload disabled={busy} onFile={submitFile} />}
-        {tab === "link" && <Link disabled={busy} onUrl={(u) => { const b = new FormData(); b.append("url", u); go(b, null); }} />}
+        {tab === "link" && <Link disabled={busy} onUrl={(u) => go({ url: u }, null)} />}
         {tab === "camera" && <Camera disabled={busy} onClip={submitFile} />}
       </section>
 
