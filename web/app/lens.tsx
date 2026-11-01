@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Client, handle_file } from "@gradio/client";
+import { Client } from "@gradio/client";
 
-// Default: the ZeroGPU Space through Gradio's client. Set NEXT_PUBLIC_LENS_API to use the NDJSON service instead
-// (the CPU Docker Space, or `uvicorn service.app:app` on a laptop).
+// Default: the ZeroGPU Space. The browser uploads the clip straight to it, then /api/identify makes the GPU call with
+// the Space owner's token (anonymous visitors get almost no ZeroGPU quota). Set NEXT_PUBLIC_LENS_API to use the NDJSON
+// service instead (the CPU Docker Space, or `uvicorn service.app:app` on a laptop).
 const SPACE = process.env.NEXT_PUBLIC_LENS_SPACE ?? "System625/prysm-lens-gpu";
 const API = process.env.NEXT_PUBLIC_LENS_API;
 
@@ -46,32 +47,35 @@ type OnEvent = (e: Record<string, unknown>) => void;
 let gradio: Promise<Client> | null = null;
 const connect = () => (gradio ??= Client.connect(SPACE).catch((e) => { gradio = null; throw e; }));
 
-async function streamGradio(input: Input, onEvent: OnEvent) {
-  const app = await connect();
-  const job = app.submit("/identify", { video: input.file ? handle_file(input.file) : null, url: input.url ?? "" });
-  let seen = 0;
-  for await (const msg of job) {
-    if (msg.type === "data") {
-      const events = (msg.data as unknown[])[0] as Record<string, unknown>[];  // the list so far; send only new ones
-      for (const e of events.slice(seen)) onEvent(e);
-      seen = events.length;
-    } else if (msg.type === "status" && msg.stage === "error") {
-      const m = typeof msg.message === "string" ? msg.message : "";
-      throw new Error(/quota|ZeroGPU/i.test(m) ? `The free GPU quota for your connection is used up for today. ${m}` : m || "The Space returned an error.");
-    }
+async function streamSpace(input: Input, onEvent: OnEvent) {
+  let path: string | undefined;
+  if (input.file) {
+    const app = await connect();
+    const up = await app.upload_files(app.config!.root, [input.file]);
+    if (up.error || !up.files?.[0]) throw new Error(`Upload failed: ${up.error ?? "no file path returned"}`);
+    path = up.files[0];
   }
+  const res = await fetch("/api/identify", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path, name: input.file?.name, url: input.url }),
+  });
+  await readNdjson(res, (e) => {
+    if (e.stage === "error" && typeof e.message === "string" && /quota|ZeroGPU/i.test(e.message))
+      e = { ...e, message: `The demo's free GPU time is used up for now. Try again later. (${e.message})` };
+    onEvent(e);
+  });
 }
 
 function stream(input: Input, onEvent: OnEvent) {
-  if (!API) return streamGradio(input, onEvent);
+  if (!API) return streamSpace(input, onEvent);
   const body = new FormData();
   if (input.file) body.append("file", input.file);
   if (input.url) body.append("url", input.url);
-  return streamNdjson(body, onEvent);
+  return fetch(`${API}/identify`, { method: "POST", body }).then((res) => readNdjson(res, onEvent));
 }
 
-async function streamNdjson(body: FormData, onEvent: OnEvent) {
-  const res = await fetch(`${API}/identify`, { method: "POST", body });
+async function readNdjson(res: Response, onEvent: OnEvent) {
   if (!res.ok || !res.body) {
     const j = await res.json().catch(() => ({ error: `${res.status} ${res.statusText}` }));
     throw new Error(j.error ?? `HTTP ${res.status}`);

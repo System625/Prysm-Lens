@@ -1,7 +1,8 @@
 """Lens on a ZeroGPU Space: the same pipeline as service/app.py, with the encoder and the 575,973-row search on a GPU.
 
 On the 2-vCPU Docker Space the Perception Encoder took ~2.2 s per image, 35-70 s a clip. ZeroGPU lends a GPU only
-inside @spaces.GPU calls, billed to each visitor's free daily quota (a clip needs a few seconds of it), so the
+inside @spaces.GPU calls, billed to the caller's daily quota (the web demo calls through its server with the owner's
+PRO token: anonymous visitors get 2 minutes and a small cap on runs), so the
 encoder and the similarity search move in there and everything else (ffmpeg, SAM 3.1 and Muse Spark over HTTP,
 the voting) stays on CPU.
 
@@ -32,7 +33,7 @@ _neighbours: dict[str, list] = {}
 def key(q: np.ndarray) -> str:
     return hashlib.sha1(np.ascontiguousarray(q).tobytes()).hexdigest()
 
-@spaces.GPU(duration=30)
+@spaces.GPU(duration=15)  # a call is admitted only if this much quota is left; the work takes ~3 s
 def gpu_embed(batch: torch.Tensor):
     """Encode the views and find each one's K nearest screenshots in one GPU slot."""
     q = encode(model, batch)
