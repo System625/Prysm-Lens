@@ -23,6 +23,21 @@ def extract_frames(clip: str, folder: str, n: int = FRAMES) -> list[str]:
         list(ex.map(grab, range(n)))
     return sorted(glob.glob(f"{folder}/*.jpg"))
 
+FLAT_LIMIT = 0.85
+
+def flatness(path: str) -> float:
+    """Share of a frame within 12 grey levels of its median: ~0.9 for a TikTok outro, a black fade or a title card,
+    well under 0.85 for gameplay."""
+    g = np.asarray(ImageOps.grayscale(Image.open(path)).resize((64, 64)), dtype=np.float32)
+    return float((np.abs(g - np.median(g)) < 12).mean())
+
+def keep_frames(frames: list[str], limit: float = FLAT_LIMIT) -> list[int]:
+    """Indices of the frames worth searching: flat ones (outros, fades, cards) out, unless every frame is flat.
+    A phone video of a PC build ended on TikTok's outro and those frames pulled in junk candidates (1 Nov);
+    on the 104-clip benchmark dropping them loses nothing and lifts R.E.P.O. from #10 to #2."""
+    keep = [i for i, f in enumerate(frames) if flatness(f) <= limit]
+    return keep or list(range(len(frames)))
+
 def trim_bars(img: Image.Image, thresh: int = 16) -> Image.Image:
     """Crop near-black letterbox/pillarbox bars."""
     g = np.asarray(ImageOps.grayscale(img), dtype=np.float32)

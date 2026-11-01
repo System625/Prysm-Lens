@@ -76,19 +76,20 @@ def screen_boxes(sam_frames: dict, n_frames: int) -> dict[int, tuple]:
     return fr if len(fr) >= MIN_SHARE * n_frames else {}
 
 def crop_to_screen(frames: list[str], boxes: dict[int, tuple]):
-    """Each frame cropped to its screen box (frames without one borrow the nearest frame's box)."""
+    """The frames SAM found a screen in, each cropped to its box. Frames without a box are left out: borrowing a
+    neighbour's box cropped a PC case's fans and a TikTok outro into the query (1 Nov)."""
     from PIL import Image
-    have = sorted(boxes)
     out = []
-    for i, f in enumerate(frames):
-        b = boxes[min(have, key=lambda j: abs(j - i))]
+    for i in sorted(boxes):
+        b, f = boxes[i], frames[i]
         im = Image.open(f).convert("RGB")
         W, H = im.size
         out.append(im.crop((int(b[0] * W), int(b[1] * H), int(b[2] * W), int(b[3] * H))))
     return out
 
-def find_screen(frames: list[str], cache: str | None = None) -> dict[int, tuple]:
-    """screen_boxes for these frames, from the SAM result cached at `cache` or one live sam-3.1 call (saved there)."""
+def find_screen(frames: list[str], cache: str | None = None, keep: list[int] | None = None) -> dict[int, tuple]:
+    """screen_boxes for these frames, from the SAM result cached at `cache` or one live sam-3.1 call (saved there).
+    SAM sees every frame; with `keep` (search.keep_frames) only those frames count, re-indexed 0..len(keep)-1."""
     if cache and os.path.exists(cache):
         res = json.load(open(cache))
     else:
@@ -97,7 +98,10 @@ def find_screen(frames: list[str], cache: str | None = None) -> dict[int, tuple]
         if cache:
             os.makedirs(os.path.dirname(cache) or ".", exist_ok=True)
             json.dump(res, open(cache, "w"))
-    return screen_boxes(res["frames"], len(frames))
+    sam = {int(k): v for k, v in res["frames"].items()}
+    if keep is None:
+        return screen_boxes(sam, len(frames))
+    return screen_boxes({j: sam[i] for j, i in enumerate(keep) if i in sam}, len(keep))
 
 if __name__ == "__main__":
     import sys

@@ -4,7 +4,7 @@
   GET  /           health + today's usage
 
 The response is NDJSON, one event per line, so the web demo can draw each stage as it lands:
-  {"stage": "frames",     "frames": [jpeg data URLs]}
+  {"stage": "frames",     "frames": [jpeg data URLs], "skipped": flat frames left out}
   {"stage": "screen",     "found": bool, "boxes": {frame: [x1,y1,x2,y2] as 0..1}, "crops": [jpeg data URLs]}
   {"stage": "candidates", "items": [{"id", "title", "year", "score", "editions", "shots": [IGDB image URLs]}]}
   {"stage": "answer",     "own_guess", "pick", "game_title", "confidence", "evidence", "game": {...} | null}
@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from PIL import Image
 
 from indexer.embed import load_model, encode
-from service.search import Index, extract_frames, views
+from service.search import Index, extract_frames, keep_frames, views
 from service.screen import crop_to_screen, find_screen
 from service.verify import build_request, call, prepare_clip, LABELS
 
@@ -128,14 +128,16 @@ def identify(clip: str, work: str, embed=cpu_embed):
     # Muse Spark's copy of the clip (<= 60 s, 480p) encodes in the background while the search runs.
     small = pool.submit(prepare_clip, clip, f"{work}/verify.mp4")
     ms, t = {}, time.time()
-    frames = extract_frames(clip, f"{work}/frames")
-    if not frames:
+    every = extract_frames(clip, f"{work}/frames")
+    if not every:
         raise RuntimeError("No frames could be read from that video.")
-    yield {"stage": "frames", "frames": [thumb(Image.open(f)) for f in frames]}
+    keep = keep_frames(every)  # outros, black fades and title cards are not searched
+    frames = [every[i] for i in keep]
+    yield {"stage": "frames", "frames": [thumb(Image.open(f)) for f in frames], "skipped": len(every) - len(frames)}
     ms["frames"] = int((time.time() - t) * 1000); t = time.time()
 
     # SAM is a network call: fingerprint the full frames while it runs, and redo only if it finds a filmed screen.
-    sam = pool.submit(find_screen, frames, f"{work}/sam.json")
+    sam = pool.submit(find_screen, every, f"{work}/sam.json", keep)
     full = embed([v for f in frames for v in views(Image.open(f))])
     sam_error = None
     try:

@@ -21,6 +21,7 @@ type Answer = {
 };
 type Run = {
   frames?: string[];
+  skipped?: number;
   screen?: { found: boolean; crops: string[]; error?: string | null };
   candidates?: Candidate[];
   answer?: Answer;
@@ -137,7 +138,7 @@ export default function Lens() {
         setRun((r) => {
           if (!r) return r;
           const at = { ...r.at, [stage]: Date.now() };
-          if (stage === "frames") return { ...r, at, frames: e.frames as string[] };
+          if (stage === "frames") return { ...r, at, frames: e.frames as string[], skipped: (e.skipped as number) ?? 0 };
           if (stage === "screen") return { ...r, at, screen: e as unknown as Run["screen"] };
           if (stage === "candidates") return { ...r, at, candidates: e.items as Candidate[] };
           if (stage === "answer") return { ...r, at, answer: e as Answer };
@@ -331,6 +332,11 @@ function body(key: string, run: Run, preview: string | null) {
         <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-8">
           {run.frames.map((f, i) => <img key={i} src={f} alt="" className="aspect-square w-full rounded-md object-cover" />)}
         </div>
+        {!!run.skipped && (
+          <p className="text-sm text-muted">
+            Skipped {run.skipped} blank {run.skipped === 1 ? "frame" : "frames"} (fades, outros, title cards).
+          </p>
+        )}
       </div>
     );
   if (key === "screen" && run.screen)
