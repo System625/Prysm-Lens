@@ -1,6 +1,7 @@
 """Lens retrieval: clip -> frames -> PE embeddings -> nearest IGDB screenshots -> ranked games."""
 import glob, json, os, subprocess
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from PIL import Image, ImageOps
 
@@ -14,10 +15,12 @@ def extract_frames(clip: str, folder: str, n: int = FRAMES) -> list[str]:
     os.makedirs(folder, exist_ok=True)
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", clip],
                                capture_output=True, text=True).stdout.strip() or 0)
-    for i in range(n):
+    def grab(i: int) -> None:
         t = dur * (0.05 + 0.9 * i / max(n - 1, 1))
-        subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.2f}", "-i", clip, "-frames:v", "1", "-vf", "scale=-2:720",
-                        "-q:v", "3", f"{folder}/{i:02d}.jpg", "-y"], check=False)
+        subprocess.run(["ffmpeg", "-v", "error", "-threads", "1", "-ss", f"{t:.2f}", "-i", clip, "-frames:v", "1",
+                        "-vf", "scale=-2:720", "-q:v", "3", f"{folder}/{i:02d}.jpg", "-y"], check=False)
+    with ThreadPoolExecutor(4) as ex:  # 16 seeks one after another took 12-20 s on a 2-vCPU host
+        list(ex.map(grab, range(n)))
     return sorted(glob.glob(f"{folder}/*.jpg"))
 
 def trim_bars(img: Image.Image, thresh: int = 16) -> Image.Image:
@@ -77,28 +80,37 @@ class Index:
         popularity prior on the final score.
         With families loaded, a game's editions vote as one (Days Gone + Days Gone Remastered take one slot,
         not two); the returned game is the member whose screenshots matched best, see members() for the rest."""
-        sims = query.astype(np.float32) @ self.vecs.T
-        if self.hub is not None:
-            sims -= HUB_WEIGHT * self.hub
         score, by_member = defaultdict(float), defaultdict(float)
-        for s in sims:
-            idx = np.argpartition(-s, k_neighbours)[:k_neighbours]
+        neighbours = self.neighbours(query, k_neighbours)
+        for idx, vals in neighbours:
             best, owner = {}, {}
-            for i in idx:
+            for i, si in zip(idx, vals):
                 g = int(self.games[i])
                 f = self.family.get(g, g)
-                if s[i] > best.get(f, -9):
-                    best[f], owner[f] = float(s[i]), g
+                if si > best.get(f, -9):
+                    best[f], owner[f] = float(si), g
             fs = list(best)
             v = np.array([best[f] for f in fs])
             w = np.exp((v - v.max()) / temperature)
             for f, wf in zip(fs, w / w.sum()):
-                score[f] += float(wf) / len(sims)
+                score[f] += float(wf) / len(neighbours)
                 by_member[owner[f]] += float(wf)
         for f in score:
             score[f] *= 1 + PRIOR_WEIGHT * max(self.prior.get(g, 0.0) for g in self.members(f))
         ranked = sorted(score.items(), key=lambda kv: -kv[1])[:top]
         return [(max(self.members(f), key=lambda g: by_member.get(g, 0.0)), s) for f, s in ranked]
+
+    def neighbours(self, query: np.ndarray, k: int) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Per view, the k nearest screenshots (row ids, hub-penalised similarities). The GPU Space replaces this
+        with a torch version that runs inside its GPU slot; rank() votes the same way on either."""
+        sims = query.astype(np.float32) @ self.vecs.T
+        if self.hub is not None:
+            sims -= HUB_WEIGHT * self.hub
+        out = []
+        for s in sims:
+            idx = np.argpartition(-s, k)[:k]
+            out.append((idx, s[idx]))
+        return out
 
     def evidence(self, query: np.ndarray, game: int, n: int = 3) -> list[str]:
         """The game's n screenshots closest to any view of the clip: what the verifier is shown for that candidate."""

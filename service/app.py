@@ -19,6 +19,7 @@ LENS_INDEX (index base name, default index-q8), LENS_DAILY_CAP (identify calls p
 each costs about $0.03 of Meta credit, so a public demo can't drain it).
 """
 import base64, io, json, os, subprocess, tempfile, threading, time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import numpy as np, torch
 from fastapi import FastAPI, File, Form, UploadFile
@@ -36,6 +37,20 @@ INDEX = os.environ.get("LENS_INDEX", "index-q8")
 DAILY_CAP = int(os.environ.get("LENS_DAILY_CAP", 400))
 MAX_UPLOAD = 200_000_000
 SHOT_URL = "https://images.igdb.com/igdb/image/upload/{size}/{id}.jpg"
+
+def cpu_quota() -> int:
+    """CPUs this container may use. os.cpu_count() reports the host's cores, and torch starting that many threads
+    on a 2-vCPU allowance made the encoder ~4x slower than 2 threads on a laptop (1 Nov)."""
+    try:
+        q, period = open("/sys/fs/cgroup/cpu.max").read().split()
+        if q != "max":
+            return max(1, round(int(q) / int(period)))
+    except (OSError, ValueError):
+        pass
+    return os.cpu_count() or 1
+
+THREADS = int(os.environ.get("LENS_THREADS", cpu_quota()))
+torch.set_num_threads(THREADS)
 
 app = FastAPI(title="Prysm Lens")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -100,8 +115,18 @@ def normalise(src: str, out: str) -> str:
                     "-crf", "16", "-c:a", "aac", "-b:a", "96k", out], check=True)
     return out
 
-def identify(clip: str, work: str):
-    index, (model, preprocess), games = load()
+def cpu_embed(ims: list) -> np.ndarray:
+    _, (model, preprocess), _ = load()
+    with busy:
+        return encode(model, torch.stack([preprocess(v) for v in ims]))
+
+def identify(clip: str, work: str, embed=cpu_embed):
+    """The pipeline as a generator of stage events. `embed` turns PIL images into normalised query vectors;
+    the GPU Space passes one that runs the encoder (and the index search) on a ZeroGPU slot."""
+    index, _, games = load()
+    pool = ThreadPoolExecutor(2)
+    # Muse Spark's copy of the clip (<= 60 s, 480p) encodes in the background while the search runs.
+    small = pool.submit(prepare_clip, clip, f"{work}/verify.mp4")
     ms, t = {}, time.time()
     frames = extract_frames(clip, f"{work}/frames")
     if not frames:
@@ -109,10 +134,12 @@ def identify(clip: str, work: str):
     yield {"stage": "frames", "frames": [thumb(Image.open(f)) for f in frames]}
     ms["frames"] = int((time.time() - t) * 1000); t = time.time()
 
-    usd = 0.01  # one SAM video call, billed at the 50-frame minimum
+    # SAM is a network call: fingerprint the full frames while it runs, and redo only if it finds a filmed screen.
+    sam = pool.submit(find_screen, frames, f"{work}/sam.json")
+    full = embed([v for f in frames for v in views(Image.open(f))])
     sam_error = None
     try:
-        boxes = find_screen(frames, f"{work}/sam.json")
+        boxes = sam.result(timeout=90)
     except Exception as e:  # SAM down or slow: search the plain frames rather than fail the request
         boxes, sam_error = {}, str(e)[:200]
     crops = crop_to_screen(frames, boxes) if boxes else []
@@ -120,11 +147,9 @@ def identify(clip: str, work: str):
            "crops": [thumb(c) for c in crops], "error": sam_error}
     ms["sam"] = int((time.time() - t) * 1000); t = time.time()
 
-    with busy:
-        ims = crops if crops else [v for f in frames for v in views(Image.open(f))]
-        query = encode(model, torch.stack([preprocess(v) for v in ims]))
-        ranked = index.rank(query)
-        evidence = {g: index.evidence(query, g) for g, _ in ranked}
+    query = embed(crops) if crops else full
+    ranked = index.rank(query)
+    evidence = {g: index.evidence(query, g) for g, _ in ranked}
     items = []
     for g, score in ranked:
         meta = games.get(g, {})
@@ -134,11 +159,11 @@ def identify(clip: str, work: str):
     yield {"stage": "candidates", "items": items}
     ms["search"] = int((time.time() - t) * 1000); t = time.time()
 
-    small = prepare_clip(clip, f"{work}/verify.mp4")
     cands = [{"title": c["title"], "year": c["year"],
               "shots": [SHOT_URL.format(size="t_logo_med", id=s) for s in evidence[c["id"]]]} for c in items]
-    res = call(build_request(small, cands, "first"), os.environ["MODEL_API_KEY"])
-    usd += res["usd"]
+    res = call(build_request(small.result(), cands, "first"), os.environ["MODEL_API_KEY"])
+    pool.shutdown(wait=False)
+    usd = 0.01 + res["usd"]  # one SAM video call (50-frame minimum) + Muse Spark
     a = res["answer"] or {}
     pick = a.get("pick")
     game = items[LABELS.index(pick)] if pick and pick != "none" and LABELS.index(pick) < len(items) else None
@@ -149,7 +174,8 @@ def identify(clip: str, work: str):
 
 @app.get("/")
 def health():
-    return {"ok": True, "loaded": state["index"] is not None, "today": state["count"], "cap": DAILY_CAP}
+    return {"ok": True, "loaded": state["index"] is not None, "today": state["count"], "cap": DAILY_CAP,
+            "threads": THREADS, "host_cpus": os.cpu_count()}
 
 @app.post("/identify")
 async def identify_route(file: UploadFile | None = File(None), url: str | None = Form(None)):

@@ -1,0 +1,12 @@
+torch==2.13.0
+torchvision==0.28.0
+open_clip_torch==3.3.0
+timm==1.0.30
+numpy
+pillow
+requests
+huggingface_hub
+yt-dlp
+spaces
+fastapi
+python-multipart
