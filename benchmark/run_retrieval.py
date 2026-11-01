@@ -3,6 +3,7 @@
 Usage: python benchmark/run_retrieval.py <candidates.tsv> <baseline.jsonl> <index base> <out.jsonl> [games.json] [families.json]
 <games.json> holds every indexed game ({igdb_id, title, release_date}); default data/pool-games.json.
 With <families.json> a candidate is a game family: a hit when the truth is any of its editions (exact_rank: the shown one).
+LENS_SCREEN=1: clips SAM 3.1 finds a filmed screen in are queried on the screen crop (data/sam/<row>.json caches SAM).
 Truth cells: "A | B" alternatives, "prefix:X", "Title (YYYY)"; rows with no single game are skipped.
 """
 import csv, json, os, re, sys, time
@@ -11,6 +12,9 @@ from PIL import Image
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from indexer.embed import load_model, encode
 from service.search import Index, extract_frames, views
+from service.screen import crop_to_screen, find_screen
+
+SCREEN = os.environ.get("LENS_SCREEN") == "1"  # SAM 3.1 screen crop for filmed-screen clips (service/screen.py)
 
 def acceptable(truth: str, games: list[dict]) -> set[int]:
     ids = set()
@@ -45,11 +49,13 @@ def main(tsv: str, baseline: str, index_base: str, out: str, games_path: str = "
         frames = extract_frames(f"data/clips/{row}.mp4", f"data/frames/{row}")
         if not frames:
             continue
-        cached = f"data/query-emb/{row}-views.npy"
+        boxes = find_screen(frames, f"data/sam/{row}.json") if SCREEN else {}
+        cached = f"data/query-emb/{row}-{'screen' if boxes else 'views'}.npy"
         if os.path.exists(cached):
             query = np.load(cached)
         else:
-            query = encode(model, torch.stack([preprocess(v) for f in frames for v in views(Image.open(f))]))
+            ims = crop_to_screen(frames, boxes) if boxes else [v for f in frames for v in views(Image.open(f))]
+            query = encode(model, torch.stack([preprocess(v) for v in ims]))
             os.makedirs("data/query-emb", exist_ok=True)
             np.save(cached, query)
         ranked = index.rank(query)
@@ -59,7 +65,7 @@ def main(tsv: str, baseline: str, index_base: str, out: str, games_path: str = "
         rec = {"row": row, "truth": truth, "hit_rank": hit, "exact_rank": exact, "top": [title.get(g, g) for g, _ in ranked],
                "top_ids": [g for g, _ in ranked], "evidence": {str(g): index.evidence(query, g) for g, _ in ranked},
                "editions": {str(g): [m for m in index.members(g) if m != g] for g, _ in ranked},
-               "scores": [round(s, 2) for _, s in ranked], "baseline": b.get("verdict"),
+               "scores": [round(s, 2) for _, s in ranked], "screen": {str(k): v for k, v in boxes.items()}, "baseline": b.get("verdict"),
                "hard": b.get("verdict") != "right", "ms": int((time.time() - t0) * 1000)}
         results.append(rec)
         print(f"{row:>3} {'@'+str(hit) if hit else 'miss':>5} {'HARD' if rec['hard'] else '    '} {rec['top'][0][:30]:30} | {truth[:40]}", flush=True)

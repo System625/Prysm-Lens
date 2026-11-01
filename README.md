@@ -27,14 +27,14 @@ Lens finds candidates first, then checks them.
 
 ```
 clip ──► frames ──► SAM 3.1 ──► Perception Encoder ──► index search ──► Muse Spark ──► answer + evidence
-                    (mask       (fingerprint the       (top 10 games     (watches the clip
-                    facecams,    cleaned frames)        from ~450k        next to each
-                    subtitles,                          game screenshots) candidate's screenshots
-                    overlays)                                             and picks one, or none)
+                    (find the    (fingerprint the       (top 10 games     (watches the clip
+                    filmed       frames, or the         from 575,973      next to each
+                    screen,      screen crop)           game screenshots) candidate's screenshots
+                    crop to it)                                           and picks one, or none)
 ```
 
 1. **Index.** Fingerprint every game's screenshots with Meta's **Perception Encoder** (PE-Core-L14-336, Apache 2.0). It does not depend on what a model happens to remember, so a game released last week is covered as soon as it has screenshots.
-2. **Clean.** Streamers' facecams, subtitles and on-screen UI overlays get in the way of the gameplay. **SAM 3.1** masks them out of the frames before they are fingerprinted.
+2. **Crop.** Many shared clips are a phone filming a monitor or a TV. The room around the screen (desk, LED strips, the player) matches room-like games better than the game being played. **SAM 3.1** tracks "screen" through the clip's frames in one video call, and when it holds a confident screen on at least half of them, Lens fingerprints the crop instead of the room. (We first expected facecams to be the problem; masking faces measured as noise, so we looked at the misses and found filmed screens.)
 3. **Find candidates.** A nearest-neighbour search returns the top 10 games.
 4. **Check.** **Muse Spark** watches the clip alongside each candidate's screenshots and picks the right game, citing what it saw. It can also decide that none of them match.
 5. **Listen.** **Muse Voice Transcribe**, biased toward the candidate titles, catches a streamer saying the game's name out loud.
@@ -45,7 +45,7 @@ clip ──► frames ──► SAM 3.1 ──► Perception Encoder ──► i
 | Model | Role |
 |---|---|
 | Perception Encoder (open weights) | Visual fingerprint for screenshots and clip frames |
-| SAM 3.1 | Masks facecams, subtitles and overlays out of clip frames |
+| SAM 3.1 | Finds the filmed monitor / TV / phone in a clip and crops the frames to it |
 | Muse Spark 1.3 | Watches the clip next to the candidates and picks one, with evidence |
 | Muse Voice Transcribe | Catches spoken game names, with keyword biasing |
 | Muse Glimmer (to be tested) | Its vision encoder as an alternative fingerprinter |
@@ -60,6 +60,8 @@ We publish the **clip links and labels only** ([benchmark/clips.tsv](benchmark/c
 
 **Index alone, first gate (575,973 screenshots of 87,077 games, 104 distinct clips):** the right game is first for 45 clips and in the top 10 for 72; on the hard subset, in the top 10 for 13 of 19. Muse Spark then picks from those ten.
 
+**With the SAM 3.1 screen crop:** first for 47, top 10 for **75** (top 10 with at most 3 clips per game: 54 → 57). It fires on 7 clips, all of them filmed screens, and changes nothing else: Resident Evil 4 and A Way Out go to first place, S.T.A.L.K.E.R. 2 from a miss to third, Call of Duty: Mobile from a miss to tenth. Games with monitors inside the game don't trigger it, because a one-off box isn't enough. One call per clip: the 16 sampled frames go up as a 16-second video, billed at SAM's 50-frame minimum, $0.01 a clip.
+
 **Muse Spark, 5 runs per clip, same 104 clips** ([benchmark/score_combined.py](benchmark/score_combined.py)). A clip counts as right when most of its runs are, and any edition of the right game counts (Days Gone Remastered for Days Gone), for every row:
 
 | | All 104 | Hard 19 | Confidently wrong |
@@ -67,10 +69,12 @@ We publish the **clip links and labels only** ([benchmark/clips.tsv](benchmark/c
 | Prysm today (captions) | 85 | 1 | 5 |
 | Muse Spark, video only | 77 | 12 | 7 |
 | Muse Spark + Lens top 10 | 74 | **13** | 15 |
-| Muse Spark + Lens, own answer first | 76 | **13** | 13 |
-| **Prysm when confident, else Muse Spark + Lens, own answer first** | **90** | 11 | 8 |
+| Muse Spark + Lens (with SAM crop), own answer first | 77 | **13** | 13 |
+| **Prysm when confident, else Muse Spark + Lens (with SAM crop), own answer first** | **91** | 11 | 8 |
 
-Lens helps where it was meant to: on clips the caption pipeline misses, Muse Spark names 13 of 19 with the candidates and 12 without. Shown a candidate list straight away, it sometimes trades a right answer of its own for a wrong candidate (15 confidently wrong vs 7). So the shipped prompt has it name the game from the clip first and keep that answer unless a candidate's screenshots clearly show the same game: one call, hard 13 of 19, and only one confident mistake there. Four hard clips are ones Prysm answers confidently and wrongly, so the cascade never reaches them; with no game counted more than 3 times (86 clips), the cascade ties Prysm at 73. Those, and the 19-clip sample, are the open problems. About $27 for all 1,560 calls.
+Lens helps where it was meant to: on clips the caption pipeline misses, Muse Spark names 13 of 19 with the candidates and 12 without. Shown a candidate list straight away, it sometimes trades a right answer of its own for a wrong candidate (15 confidently wrong vs 7). So the shipped prompt has it name the game from the clip first and keep that answer unless a candidate's screenshots clearly show the same game: one call, hard 13 of 19, and only one confident mistake there. Four hard clips are ones Prysm answers confidently and wrongly, so the cascade never reaches them; with no game counted more than 3 times (86 clips), the cascade gets 74 to Prysm's 73. Those, and the 19-clip sample, are the open problems. About $27 for all 1,560 Muse Spark calls, plus $1.09 for SAM on every clip.
+
+Before the SAM crop, own-answer-first scored 76 and the cascade 90 (73 with the cap). The crop's end-to-end gain is small because Muse Spark already knows the big games in those filmed clips from the video; it matters in retrieval, which is what covers the long tail Spark doesn't know.
 
 ## What is new in this repo
 
@@ -79,7 +83,7 @@ The hackathon only counts work built during the event. Here is the split:
 | Built during the hackathon (this repo) | Existed before |
 |---|---|
 | Screenshot index and the indexing pipeline | The Prysm app (iOS / Android) |
-| SAM 3.1 frame cleaning | Prysm's text-based share pipeline (the 81% baseline) |
+| SAM 3.1 screen crop | Prysm's text-based share pipeline (the 81% baseline) |
 | Search service | The game catalog Lens indexes against |
 | Muse Spark verification step | |
 | Voice step | |
@@ -100,7 +104,7 @@ Prysm-Lens/
   integrations/  the call Prysm's share pipeline makes to Lens
 ```
 
-The web demo shows every stage, not only the answer: the frames it pulled out, the frames after SAM 3.1 masks the overlays, the top candidates with their matching screenshots, and Muse Spark's pick with its reasoning. On a phone, the camera mode lets you point it at a TV.
+The web demo shows every stage, not only the answer: the frames it pulled out, the screen SAM 3.1 found and the crop Lens searched with, the top candidates with their matching screenshots, and Muse Spark's pick with its reasoning. On a phone, the camera mode lets you point it at a TV.
 
 ## Status
 
@@ -108,7 +112,7 @@ The web demo shows every stage, not only the answer: the frames it pulled out, t
 - [x] Baseline measured on the existing pipeline (81%)
 - [x] Muse Spark on the video alone (no index), same clips
 - [x] Perception Encoder index plus a recall@10 check (72 of 104 in the top 10)
-- [ ] SAM 3.1 cleaning
+- [x] SAM 3.1 screen crop (top 10: 72 → 75 of 104)
 - [ ] Full pipeline vs baseline, on all clips and on the hard subset
 - [ ] Search service deployed
 - [ ] Web demo live
