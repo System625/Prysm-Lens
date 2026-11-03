@@ -123,3 +123,9 @@ Not built, and next: Muse Voice Transcribe for streamers who say the game's name
 Lens is built by **Tunde-Ajayi Olamiposi**: the recognition pipeline, the search service, the web demo and the benchmark.
 
 The Prysm app it plugs into is the existing work of the wider Prysm team.
+
+## Licence
+
+The code in this repo is open source under the [MIT licence](LICENSE).
+
+The licence covers the code and our benchmark labels only. It does not cover the Prysm name and logo, the game screenshots the indexer downloads (they belong to the games' publishers, served via IGDB), or the clips the benchmark links to (they belong to their creators). The screenshot index itself is not published.
