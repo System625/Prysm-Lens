@@ -98,7 +98,8 @@ Prysm's backend stays private and Lens is not wired into it yet. Everything buil
 Prysm-Lens/
   indexer/       Python, run locally: fingerprints game screenshots into the index
   service/       the pipeline (frames, SAM 3.1, search, Muse Spark) as a ZeroGPU Gradio Space, or a FastAPI NDJSON service
-  web/           Next.js demo site (Vercel): paste a link, upload a clip, or use your camera
+  web/           Next.js demo site (Vercel): paste a link, upload a clip, or use your camera. YouTube blocks servers
+                 from downloading, so a YouTube link is recorded in the visitor's browser (or screen-recorded on a phone)
   benchmark/     clip links + labels, the scoring script, results
 ```
 

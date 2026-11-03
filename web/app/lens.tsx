@@ -63,6 +63,8 @@ const connect = () => (gradio ??= connectWithRetry().catch((e) => { gradio = nul
 
 // Gradio's and the browser's own error texts mean nothing to a visitor; say what happened and what to do.
 function friendly(message: string) {
+  if (/youtube.*(sign in|not a bot)/i.test(message))
+    return "YouTube doesn't let servers download its videos. Paste the link again to capture it in your browser, or screen-record it and upload.";
   if (/quota|ZeroGPU/i.test(message)) return "The demo's free GPU time is used up for now. Try again later.";
   if (/busy/i.test(message)) return "Lens is busy with other clips right now. Try again in a minute.";
   if (/Space metadata|Connection errored|resolve app config|space status|API info|Failed to fetch|fetch failed|NetworkError|Load failed/i.test(message))
@@ -228,7 +230,7 @@ export default function Lens() {
             ))}
           </div>
           {tab === "upload" && <Upload disabled={busy} onFile={submitFile} />}
-          {tab === "link" && <Link disabled={busy} onUrl={(u) => go({ url: u }, null)} />}
+          {tab === "link" && <Link disabled={busy} onUrl={(u) => go({ url: u }, null)} onFile={submitFile} />}
           {tab === "camera" && <Camera disabled={busy} onClip={submitFile} />}
         </section>
 
@@ -261,18 +263,197 @@ function Upload({ disabled, onFile }: { disabled: boolean; onFile: (f: File) => 
   );
 }
 
-function Link({ disabled, onUrl }: { disabled: boolean; onUrl: (u: string) => void }) {
+function Link({ disabled, onUrl, onFile }: { disabled: boolean; onUrl: (u: string) => void; onFile: (f: File) => void }) {
   const [url, setUrl] = useState("");
+  const yt = youTubeVideo(url);
   return (
-    <form className="flex flex-col gap-3 p-1 sm:flex-row" onSubmit={(e) => { e.preventDefault(); if (url.trim()) onUrl(url.trim()); }}>
-      <input value={url} onChange={(e) => setUrl(e.target.value)} disabled={disabled} inputMode="url"
-        placeholder="https://www.youtube.com/shorts/..."
-        className="min-h-[52px] min-w-0 flex-1 rounded-[14px] border-2 border-white/10 bg-black/40 px-4 font-semibold outline-none placeholder:text-white/35 focus:border-accent" />
-      <button disabled={disabled || !url.trim()} className="btn">Identify</button>
-      <p className="text-xs text-faint sm:hidden">Some sites block servers from fetching their videos. If a link fails, download the clip and upload it.</p>
-    </form>
+    <div className="flex flex-col gap-3 p-1">
+      <form className="flex flex-col gap-3 sm:flex-row" onSubmit={(e) => { e.preventDefault(); if (url.trim() && !yt) onUrl(url.trim()); }}>
+        <input value={url} onChange={(e) => setUrl(e.target.value)} disabled={disabled} inputMode="url"
+          placeholder="https://www.instagram.com/reel/..."
+          className="min-h-[52px] min-w-0 flex-1 rounded-[14px] border-2 border-white/10 bg-black/40 px-4 font-semibold outline-none placeholder:text-white/35 focus:border-accent" />
+        {!yt && <button disabled={disabled || !url.trim()} className="btn">Identify</button>}
+      </form>
+      {yt ? <YouTube key={yt.id ?? "none"} video={yt} disabled={disabled} onFile={onFile} />
+        : <p className="text-xs text-faint">Works with TikTok, Instagram, X and Facebook. YouTube takes one extra step.</p>}
+    </div>
   );
 }
+
+// YouTube answers servers' downloads with "Sign in to confirm you're not a bot" (Hugging Face's IPs, 3 Nov), and
+// every way around that defeats its bot checks. So a YouTube link is never sent to the server: the visitor's own
+// browser plays it in YouTube's embed player and records it, or the visitor screen-records it and uploads.
+type YouTubeVideo = { id: string | null; short: boolean };
+
+function youTubeVideo(raw: string): YouTubeVideo | null {
+  let u: URL;
+  try { u = new URL(/^[a-z]+:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`); } catch { return null; }
+  const host = u.hostname.replace(/^(www|m|music)\./, "");
+  if (host === "youtu.be") return { id: u.pathname.split("/")[1] || null, short: false };
+  if (host !== "youtube.com" && host !== "youtube-nocookie.com") return null;
+  const path = u.pathname.match(/^\/(shorts|live|embed|v)\/([\w-]{6,})/);
+  return { id: path?.[2] ?? u.searchParams.get("v"), short: path?.[1] === "shorts" };
+}
+
+type YTPlayer = { playVideo(): void; seekTo(s: number, allow: boolean): void; getDuration(): number; destroy(): void };
+type YTGlobal = { Player: new (el: HTMLElement, opts: object) => YTPlayer; PlayerState: { PLAYING: number } };
+type CaptureTrack = MediaStreamTrack & { cropTo(target: unknown): Promise<void> };
+declare global {
+  interface Window { YT?: YTGlobal; onYouTubeIframeAPIReady?: () => void; CropTarget?: { fromElement(el: Element): Promise<unknown> } }
+}
+
+let ytApi: Promise<YTGlobal> | null = null;
+function loadYouTubeApi(): Promise<YTGlobal> {
+  return (ytApi ??= new Promise((resolve) => {
+    if (window.YT?.Player) return resolve(window.YT);
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { prev?.(); resolve(window.YT!); };
+    const s = document.createElement("script");
+    s.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(s);
+  }));
+}
+
+const CAPTURE_SECONDS = 10;
+
+function YouTube({ video, disabled, onFile }: { video: YouTubeVideo; disabled: boolean; onFile: (f: File) => void }) {
+  // Capturing needs the browser to record this tab and crop it to the player (Region Capture: Chrome and Edge on a
+  // computer). Phones can't share a tab at all. Decided after mount: the server render can't know the browser.
+  const [mode, setMode] = useState<"checking" | "capture" | "record">("checking");
+  const [platform, setPlatform] = useState<"ios" | "android" | "desktop">("desktop");
+  const [embed, setEmbed] = useState<"loading" | "ready" | "blocked">("loading");
+  const [state, setState] = useState<"idle" | "rec">("idle");
+  const [left, setLeft] = useState(0);
+  const [err, setErr] = useState<string | null>(null);
+  const host = useRef<HTMLDivElement>(null);
+  const zone = useRef<HTMLDivElement>(null);  // the part of the player that gets recorded
+  const player = useRef<YTPlayer | null>(null);
+  const picker = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const ua = navigator.userAgent;
+    const ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    const android = /Android/i.test(ua);
+    setPlatform(ios ? "ios" : android ? "android" : "desktop");
+    setMode(!ios && !android && !!navigator.mediaDevices?.getDisplayMedia && !!window.CropTarget ? "capture" : "record");
+  }, []);
+
+  useEffect(() => {
+    if (mode !== "capture" || !video.id || !host.current) return;
+    let gone = false;
+    const el = document.createElement("div");  // YouTube swaps this for its iframe; React never owns it
+    host.current.appendChild(el);
+    setEmbed("loading");
+    setErr(null);
+    loadYouTubeApi().then((YT) => {
+      if (gone) return;
+      player.current = new YT.Player(el, {
+        videoId: video.id, width: "100%", height: "100%",
+        playerVars: { autoplay: 1, mute: 1, playsinline: 1, loop: 1, playlist: video.id, rel: 0, controls: 0, disablekb: 1 },
+        events: {
+          onReady: () => !gone && setEmbed("ready"),
+          onError: () => !gone && setEmbed("blocked"),  // 101/150: the owner turned embedding off; 100: removed
+        },
+      });
+    });
+    return () => {
+      gone = true;
+      player.current?.destroy();
+      player.current = null;
+      if (host.current) host.current.innerHTML = "";
+    };
+  }, [mode, video.id]);
+
+  async function capture() {
+    setErr(null);
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 }, audio: false,
+        // Chrome: offer this tab first, and only tabs
+        preferCurrentTab: true, selfBrowserSurface: "include", surfaceSwitching: "exclude", monitorTypeSurfaces: "exclude",
+      } as DisplayMediaStreamOptions);
+    } catch {
+      return setErr("Lens needs you to share this tab to record the video. Press Capture and choose Share.");
+    }
+    const track = stream.getVideoTracks()[0] as CaptureTrack;
+    try {
+      host.current!.scrollIntoView({ block: "center" });
+      await track.cropTo(await window.CropTarget!.fromElement(zone.current!));
+    } catch {
+      stream.getTracks().forEach((t) => t.stop());
+      return setErr("Choose this tab (Prysm Lens) when the browser asks, so Lens can record just the video.");
+    }
+    const p = player.current;
+    if (p) {
+      const d = p.getDuration();
+      if (d > 60) p.seekTo(d * 0.1, true);  // skip a long video's intro, as the server does
+      p.playVideo();
+    }
+    await new Promise((r) => setTimeout(r, 600));  // let the seek land before the first frame
+    const type = ["video/mp4", "video/webm;codecs=vp9", "video/webm"].find((t) => MediaRecorder.isTypeSupported(t)) ?? "";
+    const rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+    const parts: Blob[] = [];
+    rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
+    rec.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      setState("idle");
+      const blob = new Blob(parts, { type: rec.mimeType || "video/webm" });
+      onFile(new File([blob], `youtube-${video.id}.${blob.type.includes("mp4") ? "mp4" : "webm"}`, { type: blob.type }));
+    };
+    track.onended = () => rec.state === "recording" && rec.stop();  // "Stop sharing" ends it early
+    rec.start(1000);
+    setState("rec");
+    let n = CAPTURE_SECONDS;
+    setLeft(n);
+    const t = setInterval(() => { n -= 1; setLeft(n); if (n <= 0 || rec.state !== "recording") { clearInterval(t); if (rec.state === "recording") rec.stop(); } }, 1000);
+  }
+
+  const recordHow = platform === "ios" ? "Control Centre → Screen Recording" : platform === "android"
+    ? "Quick Settings → Screen record" : "Mac: Shift-Command-5. Windows: Win+Alt+R";
+  const useRecord = mode === "record" || embed === "blocked" || !video.id;
+
+  return (
+    <div className="rounded-[20px] border-2 border-white/10 bg-black/30 p-4">
+      <p className="font-extrabold">YouTube doesn&apos;t let servers download its videos.</p>
+      {mode === "checking" ? null : useRecord ? (
+        <>
+          <p className="mt-1 text-sm text-muted">
+            {embed === "blocked" ? "This video can't be played outside YouTube. " : mode === "record" && platform === "desktop" ? "Use Chrome or Edge to capture it right here, or: " : ""}
+            Screen-record 5 to 10 seconds of the video playing, then upload the recording.
+          </p>
+          <p className="mt-1 text-xs text-faint">How: {recordHow}</p>
+          <button type="button" onClick={() => picker.current?.click()} disabled={disabled} className="btn mt-4 w-full sm:w-auto">Upload the recording</button>
+          <input ref={picker} type="file" accept="video/*" className="hidden" disabled={disabled}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
+        </>
+      ) : (
+        <>
+          <p className="mt-1 text-sm text-muted">
+            So Lens watches it in your browser instead. Press Capture, then choose <b>Share this tab</b>: Lens records
+            {` ${CAPTURE_SECONDS}`} seconds of the player below.
+          </p>
+          {/* The recording is cropped to `zone`: the player minus the title bar YouTube draws over its top, which
+              Muse Spark read as evidence ("player header explicitly reads 'ELDEN RING - Official Gameplay Reveal'",
+              3 Nov). Lens names games from the picture; a post's title can be wrong. */}
+          <div className={`relative mx-auto mt-4 overflow-hidden rounded-[14px] bg-black ${video.short ? "aspect-[9/16] h-[min(60vh,520px)]" : "aspect-video w-full"}`}>
+            <div ref={host} className="absolute inset-0" />
+            <div ref={zone} className="pointer-events-none absolute inset-x-0 bottom-0 top-[64px]" />
+          </div>
+          <div className="mt-4 flex flex-col items-center gap-2">
+            {state === "rec"
+              ? <p className="flex items-center gap-2 font-extrabold"><span className="h-2.5 w-2.5 rounded-full bg-bad pulse" />Recording… {left}s. Keep the player on screen.</p>
+              : <button type="button" onClick={capture} disabled={disabled || embed !== "ready"} className="btn">
+                  {embed === "ready" ? `Capture ${CAPTURE_SECONDS} seconds` : "Loading the video…"}
+                </button>}
+          </div>
+        </>
+      )}
+      {err && <p className="mt-3 text-sm font-semibold text-bad">{err}</p>}
+    </div>
+  );
+}
+
 function Camera({ disabled, onClip }: { disabled: boolean; onClip: (f: File) => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
