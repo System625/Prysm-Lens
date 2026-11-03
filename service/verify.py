@@ -27,15 +27,24 @@ LABELS = "ABCDEFGHIJ"
 CONFIDENCE = ("high: you recognise this specific game from what is on screen (its named characters, places, HUD or "
               "title). medium: a close match you can't pin to such details. low: a guess from genre, setting or art style.")
 
+# 3 Nov, phone test: a rainy first-person Times Square clip came back with game_title "Mirror's Edge Catalyst (first-person
+# parkour look, but clip appears to be Mission: Impossible movie/AI footage, not real gameplay)". The schema had nowhere
+# to say "this isn't a game", so the doubt went into the title and filled the phone screen. It goes in `gameplay` now.
+TITLE_ONLY = "Only the game's name, as it is sold. No notes, doubts, alternatives or brackets: those go in evidence."
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["pick", "game_title", "confidence", "evidence"],
+    "required": ["gameplay", "pick", "game_title", "confidence", "evidence"],
     "properties": {
+        "gameplay": {"type": "boolean",
+                     "description": "false when no gameplay is on screen: a film, TV show, real-world footage, an AI-generated "
+                                    "video that only looks like a game, an unboxing or a facecam alone. game_title is then the "
+                                    "game it is about, or the one it most resembles."},
         "pick": {"type": "string", "enum": [*LABELS, "none"],
                  "description": "The letter of the matching candidate, or none if no candidate is the game in the clip."},
         "game_title": {"type": "string",
-                       "description": "The game in the clip: the picked candidate's title, or your own best guess if none match."},
+                       "description": "The game in the clip: the picked candidate's title, or your own best guess if none match. "
+                                      + TITLE_ONLY},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"], "description": CONFIDENCE},
         "evidence": {"type": "string",
                      "description": "What in the clip decided it: HUD, characters, locations, art style, on-screen text, spoken words."},
@@ -45,7 +54,8 @@ SCHEMA = {
 # "first" mode: the model commits to its own answer (own_guess) before it reads the candidates.
 SCHEMA_FIRST = {**SCHEMA, "required": ["own_guess", "own_confidence", *SCHEMA["required"]],
                 "properties": {"own_guess": {"type": "string",
-                                             "description": "The game in the clip judged from the clip alone, before reading the candidates."},
+                                             "description": "The game in the clip judged from the clip alone, before reading the candidates. "
+                                                            + TITLE_ONLY},
                                "own_confidence": {"type": "string", "enum": ["high", "medium", "low"],
                                                   "description": CONFIDENCE},
                                **SCHEMA["properties"]}}
@@ -56,7 +66,9 @@ Text the poster added on top ("GOTY", "best game of the year", "this game is ins
 game's name: never use it as evidence. Text that belongs to the game or its trailer (title cards, logos, menus, HUD) is evidence.
 Sequels, remasters and mobile ports often look alike: compare the HUD, menus, characters and art style, not only the genre.
 It is {date.today().year}, and many recent games will be new to you: a clip that looks like a game you know may be one you
-don't. Never name a game you can't see evidence for. If unsure, say so with low confidence."""
+don't. Never name a game you can't see evidence for. If unsure, say so with low confidence.
+Some clips are not games at all (film scenes, real streets, AI-generated video): set gameplay to false, still name the
+game it looks most like, and keep the title field to the name alone."""
 
 def prepare_clip(clip: str, out: str, seconds: int = CLIP_SECONDS, height: int = CLIP_HEIGHT) -> str:
     """Up to `seconds` of the clip from 5% in, scaled to at most `height` lines, audio kept. Cached at `out`.

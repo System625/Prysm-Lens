@@ -11,6 +11,7 @@ const API = process.env.NEXT_PUBLIC_LENS_API;
 
 type Candidate = { id: number; title: string; year: string | null; score: number; editions: number[]; shots: string[] };
 type Answer = {
+  gameplay?: boolean;  // false: no gameplay on screen (film, AI video, unboxing, facecam reaction); game_title = closest game
   own_guess?: string;
   own_confidence?: string;
   pick?: string;
@@ -671,11 +672,17 @@ function Verdict({ a, candidates }: { a: Answer; candidates: Candidate[] }) {
   const rank = fromLens ? candidates.findIndex((c) => c.id === a.game!.id) + 1 : 0;
   const cat = fromLens ? null : a.catalog;
   const shots = a.game?.shots ?? cat?.shots ?? [];
+  // No gameplay, and Muse Spark is only guessing. A high-confidence answer stays an answer: a Wolverine PS5 unboxing
+  // (benchmark row 82) has no gameplay but names the game for sure, and should still offer Open in Prysm.
+  const notGame = a.gameplay === false && a.confidence !== "high";
   return (
     <div className="pop overflow-hidden rounded-[28px] border-2 border-accent bg-[radial-gradient(80%_120%_at_0%_0%,rgba(253,80,33,0.28),rgba(73,23,10,0.25)_45%,#120e0d_80%)] shadow-[0_30px_80px_-24px_rgba(253,80,33,0.45)]">
       <div className="p-5 sm:p-7">
         {/* A low-confidence own answer is a guess (a filmed Horizon clip read as Ghost of Tsushima, 1 Nov): say so. */}
-        <p className="text-base font-black text-gold sm:text-lg">{a.confidence === "high" ? "This is" : a.confidence === "medium" ? "Most likely" : "Best guess, not sure"}</p>
+        {/* A clip with no gameplay (a rainy Times Square run read as movie or AI footage, 3 Nov) says so first. */}
+        <p className="text-base font-black text-gold sm:text-lg">
+          {notGame ? "No gameplay in this clip. Closest game:" : a.confidence === "high" ? "This is" : a.confidence === "medium" ? "Most likely" : "Best guess, not sure"}
+        </p>
         <h2 className="mt-1 text-4xl font-black leading-[1.02] tracking-tight text-white sm:text-6xl">
           {/* Muse Spark sometimes ends the title with the year ("... Breakpoint (2019)"); the year is shown beside it anyway. */}
           {(a.game ?? cat)?.year ? a.game_title.replace(new RegExp(`\\s*\\(${(a.game ?? cat)!.year}\\)$`), "") : a.game_title}
@@ -683,7 +690,9 @@ function Verdict({ a, candidates }: { a: Answer; candidates: Candidate[] }) {
         </h2>
         <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
           <span className={`sticker sticker--${tone}`}>{(a.confidence ?? "").replace(/^./, (c) => c.toUpperCase())} confidence</span>
-          <span className="font-semibold text-muted">{fromLens ? `Confirmed against search result #${rank}` : "Muse Spark's own answer; none of the search results matched"}</span>
+          <span className="font-semibold text-muted">
+            {notGame ? "Muse Spark found no gameplay to judge, only a look-alike" : fromLens ? `Confirmed against search result #${rank}` : "Muse Spark's own answer; none of the search results matched"}
+          </span>
         </div>
         {a.evidence && (
           <div className="mt-5 rounded-2xl bg-black/35 p-4">
@@ -691,7 +700,7 @@ function Verdict({ a, candidates }: { a: Answer; candidates: Candidate[] }) {
             <p className="mt-1.5 text-sm leading-relaxed text-fg/85 sm:text-base">{a.evidence}</p>
           </div>
         )}
-        {a.prysm_id && <SaveToPrysm id={a.prysm_id} />}
+        {a.prysm_id && !notGame && <SaveToPrysm id={a.prysm_id} />}
       </div>
       {cat && (
         <p className="border-t border-white/10 px-5 py-3 text-xs font-semibold text-faint sm:px-7">

@@ -116,6 +116,21 @@ def lookup(title: str) -> dict | None:
         return max(named, key=lambda g: g.get("release_date") or "")
     return named[0]
 
+NOTE = re.compile(r"\s*[(\[]([^()\[\]]*\s[^()\[\]]*\s[^()\[\]]*\s[^()\[\]]*)[)\]]")  # a bracket of 4+ words
+
+def tidy(a: dict) -> dict:
+    """The title fields hold only a name. A bracketed note Muse Spark put in one anyway ("Mirror's Edge Catalyst
+    (first-person parkour look, but clip appears to be Mission: Impossible movie/AI footage, not real gameplay)",
+    3 Nov) moves to the end of the evidence, so the headline stays a game's name. Short brackets ("(2019)",
+    "(Shutoko mod)") stay."""
+    a = dict(a)
+    for k in ("game_title", "own_guess"):
+        if isinstance(a.get(k), str) and (notes := NOTE.findall(a[k])):
+            a[k] = NOTE.sub("", a[k]).strip()
+            if k == "game_title":
+                a["evidence"] = " ".join(filter(None, [a.get("evidence", "").rstrip(), f"({'; '.join(notes)})"]))
+    return a
+
 @app.on_event("startup")
 def warm():
     threading.Thread(target=load, daemon=True).start()
@@ -250,7 +265,7 @@ def identify(clip: str, work: str, embed=cpu_embed):
                tries=2, read_timeout=100)
     pool.shutdown(wait=False)
     usd = 0.01 + res["usd"]  # one SAM video call (50-frame minimum) + Muse Spark
-    a = res["answer"] or {}
+    a = tidy(res["answer"] or {})
     pick = a.get("pick")
     game = items[LABELS.index(pick)] if pick and pick != "none" and LABELS.index(pick) < len(items) else None
     catalog = None
