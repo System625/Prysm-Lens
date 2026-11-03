@@ -10,6 +10,7 @@ Modes:
            that answer unless a candidate's screenshots show the same game (a wrong list cost video mode easy clips)
 """
 import base64, json, os, subprocess, time
+from datetime import date
 import requests
 
 API = "https://api.meta.ai/v1/responses"
@@ -21,6 +22,11 @@ FRAMES = 8
 SCREEN_SHOTS = 8  # SAM 3.1 screen crops shown next to the clip when it films a monitor or TV
 LABELS = "ABCDEFGHIJ"
 
+# 3 Nov: Spark named 2026 games it doesn't know (Crimson Desert, Call of Duty: Modern Warfare 4, Phantom Blade Zero)
+# as older games it does, sometimes with high confidence, once citing the poster's "GOTY" sticker as evidence.
+CONFIDENCE = ("high: you recognise this specific game from what is on screen (its named characters, places, HUD or "
+              "title). medium: a close match you can't pin to such details. low: a guess from genre, setting or art style.")
+
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -30,7 +36,7 @@ SCHEMA = {
                  "description": "The letter of the matching candidate, or none if no candidate is the game in the clip."},
         "game_title": {"type": "string",
                        "description": "The game in the clip: the picked candidate's title, or your own best guess if none match."},
-        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"], "description": CONFIDENCE},
         "evidence": {"type": "string",
                      "description": "What in the clip decided it: HUD, characters, locations, art style, on-screen text, spoken words."},
     },
@@ -40,13 +46,17 @@ SCHEMA = {
 SCHEMA_FIRST = {**SCHEMA, "required": ["own_guess", "own_confidence", *SCHEMA["required"]],
                 "properties": {"own_guess": {"type": "string",
                                              "description": "The game in the clip judged from the clip alone, before reading the candidates."},
-                               "own_confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                               "own_confidence": {"type": "string", "enum": ["high", "medium", "low"],
+                                                  "description": CONFIDENCE},
                                **SCHEMA["properties"]}}
 
-INSTRUCTIONS = """You name the video game shown in a short gameplay clip from social media.
+INSTRUCTIONS = f"""You name the video game shown in a short gameplay clip from social media.
 The clip may carry a streamer's facecam, subtitles, stickers or a meme caption; judge the gameplay underneath.
+Text the poster added on top ("GOTY", "best game of the year", "this game is insane", hashtags) is their opinion, not the
+game's name: never use it as evidence. Text that belongs to the game or its trailer (title cards, logos, menus, HUD) is evidence.
 Sequels, remasters and mobile ports often look alike: compare the HUD, menus, characters and art style, not only the genre.
-Never name a game you can't see evidence for. If unsure, say so with low confidence."""
+It is {date.today().year}, and many recent games will be new to you: a clip that looks like a game you know may be one you
+don't. Never name a game you can't see evidence for. If unsure, say so with low confidence."""
 
 def prepare_clip(clip: str, out: str, seconds: int = CLIP_SECONDS, height: int = CLIP_HEIGHT) -> str:
     """Up to `seconds` of the clip from 5% in, scaled to at most `height` lines, audio kept. Cached at `out`.
