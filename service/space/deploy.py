@@ -13,7 +13,7 @@ GPU = "--gpu" in sys.argv
 SPACE = "System625/prysm-lens-gpu" if GPU else "System625/prysm-lens"
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..", "..")
-FILES = ["service/__init__.py", "service/app.py", "service/search.py", "service/screen.py", "service/verify.py",
+FILES = ["service/__init__.py", "service/app.py", "service/search.py", "service/screen.py", "service/verify.py", "service/adult-ids.json",
          "indexer/__init__.py", "indexer/embed.py"] + (["service/gradio_app.py"] if GPU else [])
 EXTRA_DIR = os.path.join(HERE, "..", "space-gpu") if GPU else HERE
 EXTRA = ["app.py", "requirements.txt", "packages.txt", "README.md"] if GPU else ["Dockerfile", "requirements.txt", "start.sh", "README.md"]

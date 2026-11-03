@@ -46,6 +46,8 @@ def gpu_embed(batch: torch.Tensor):
 def embed(ims: list) -> np.ndarray:
     q, idx, vals = gpu_embed(torch.stack([preprocess(v) for v in ims]))
     _neighbours[key(q)] = list(zip(idx, vals))
+    while len(_neighbours) > 16:  # a filmed-screen run searches its crops, so its full-frame result is never read
+        _neighbours.pop(next(iter(_neighbours)))
     return q
 
 def neighbours(q: np.ndarray, k: int):

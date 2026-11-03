@@ -84,7 +84,9 @@ def prepare_clip(clip: str, out: str, seconds: int = CLIP_SECONDS, height: int =
                                capture_output=True, text=True).stdout.strip() or 0)
     start = dur * 0.05 if dur > seconds else 0
     subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{start:.2f}", "-t", str(seconds), "-i", clip,
-                    "-vf", f"scale=-2:'min({height},ih)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
+                    # even height too: an 852x473 upload failed libx264 here (3 Nov)
+                    "-vf", f"scale=-2:'min({height},trunc(ih/2)*2)'", "-pix_fmt", "yuv420p",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
                     "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", out, "-y"], check=True)
     if os.path.getsize(out) > CLIP_MAX_BYTES and height != SMALL_HEIGHT:
         return prepare_clip(clip, out, seconds, SMALL_HEIGHT)

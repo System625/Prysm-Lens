@@ -21,7 +21,8 @@ Env: MODEL_API_KEY (Meta Model API), LENS_DATA (folder with the index + catalog,
 LENS_INDEX (index base name, default index-q8), LENS_DAILY_CAP (identify calls per UTC day, default 400:
 each costs about $0.03 of Meta credit, so a public demo can't drain it).
 """
-import base64, io, json, os, re, subprocess, tempfile, threading, time, unicodedata
+import base64, io, ipaddress, json, os, re, socket, subprocess, tempfile, threading, time, unicodedata
+from urllib.parse import urlparse
 import requests
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -41,6 +42,10 @@ INDEX = os.environ.get("LENS_INDEX", "index-q8")
 DAILY_CAP = int(os.environ.get("LENS_DAILY_CAP", 400))
 MAX_UPLOAD = 200_000_000
 SHOT_URL = "https://images.igdb.com/igdb/image/upload/{size}/{id}.jpg"
+# IGDB ids of adult games: IGDB theme "Erotic" or an explicit title, 3,821 ids exported 3 Nov from Shelf's games table.
+# 3,817 are in the catalog. They never reach the top 10 on the 104 gameplay clips, but a flower time-lapse put
+# "Tomboy: Sex in the Forest" and its screenshots on the page (3 Nov), so search results leave them out.
+ADULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "adult-ids.json")
 
 def cpu_quota() -> int:
     """CPUs this container may use. os.cpu_count() reports the host's cores, and torch starting that many threads
@@ -72,6 +77,7 @@ def load():
             index = Index(f"{DATA}/{INDEX}", f"{DATA}/catalog-games.json", f"{DATA}/catalog-families.json")
             state["indexed"] = set(np.unique(index.games).tolist())
             state["titles"] = title_table(state["games"].values(), state["indexed"])
+            state["adult"] = set(json.load(open(ADULT))) if os.path.exists(ADULT) else set()
             state["index"] = index
     return state["index"], state["model"], state["games"]
 
@@ -98,18 +104,22 @@ def swap_numbers(t: str) -> str:
 
 NOT_A_TITLE = re.compile(r"^\s*(unknown|unidentified|unclear|none|n/a|not\b|no\b)", re.I)
 
+def named_games(title: str) -> list[dict]:
+    """Every catalog game the title names (indexed first, then most-rated), trying the spellings Spark uses."""
+    if not title or NOT_A_TITLE.match(title):
+        return []
+    tries = (title, re.sub(r"\([^)]*\)", " ", title), title.split(" / ")[0],  # "(Shutoko mod)", "A / B"
+             re.sub(r"\s+(remake|remastered|remaster)\b.*$", "", title, flags=re.I))
+    tries += tuple(swap_numbers(t) for t in tries)  # Spark wrote "Phantom Blade 0" in 5 of 5 runs on row 51
+    return next((state["titles"][k] for k in map(title_key, tries) if k and k in state["titles"]), [])
+
 def lookup(title: str) -> dict | None:
     """The catalog game Muse Spark's own answer names, or None. A shared title (Resident Evil 4 is three games)
     gives the most-rated one, or the newest when the answer says remake/remaster: screenshot similarity can't tell
     them apart on a filmed screen (row 111, the 2023 remake, sits closer to the 2011 HD release).
     On the benchmark's 102 pick=none answers: 52 land on the right game, 28 on the (wrong) game Spark named,
     22 name none ("Unknown - no gameplay visible") or a spelling the catalog lacks ("Phantom Blade 0")."""
-    if not title or NOT_A_TITLE.match(title):
-        return None
-    tries = (title, re.sub(r"\([^)]*\)", " ", title), title.split(" / ")[0],  # "(Shutoko mod)", "A / B"
-             re.sub(r"\s+(remake|remastered|remaster)\b.*$", "", title, flags=re.I))
-    tries += tuple(swap_numbers(t) for t in tries)  # Spark wrote "Phantom Blade 0" in 5 of 5 runs on row 51
-    named = next((state["titles"][k] for k in map(title_key, tries) if k and k in state["titles"]), [])
+    named = named_games(title)
     if not named:
         return None
     if re.search(r"\b(remake|remastered|remaster)\b", title, re.I):
@@ -169,10 +179,40 @@ def thumb(im: Image.Image, h: int = 240) -> str:
 SITES = {"instagram": "Instagram", "tiktok": "TikTok", "facebook": "Facebook", "fb.watch": "Facebook", "x.com": "X",
          "twitter": "X", "youtu": "YouTube", "reddit": "Reddit", "twitch": "Twitch"}
 
+NOT_A_LINK = "That isn't a link to a post. Copy the post's link (it starts with https://) and paste it here."
+HOST = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$", re.I)
+
+def check_link(url: str) -> str:
+    """The link as https, or a plain error. Only public web addresses: "elden ring" took 37 s to fail inside yt-dlp,
+    and a link to localhost or a private address would have had the Space fetch from its own network (3 Nov).
+    YouTube is refused here too: it turns servers away, and the web page captures YouTube in the visitor's browser."""
+    u = url.strip()
+    if not re.match(r"^https?://", u, re.I):
+        u = "https://" + u
+    host = (urlparse(u).hostname or "").lower()
+    if not HOST.match(host):
+        raise RuntimeError(NOT_A_LINK)
+    if host == "youtu.be" or host.endswith("youtube.com"):
+        raise RuntimeError("YouTube doesn't let servers download its videos. Open Lens's page and paste the link "
+                           "there to capture it in your browser, or screen-record it and upload.")
+    try:
+        ips = {ipaddress.ip_address(a[4][0]) for a in socket.getaddrinfo(host, None)}
+    except (socket.gaierror, ValueError):
+        raise RuntimeError(f"Lens couldn't find the site {host}. Check the link.")
+    if any(not ip.is_global for ip in ips):
+        raise RuntimeError(NOT_A_LINK)
+    return u
+
 def fetch(url: str, out: str) -> str:
     """A shared post's video via yt-dlp (first 3 minutes, <= 720p). Some sites refuse data-centre IPs now and then:
     Instagram answered "empty media response" for a reel at 16:37 on 3 Nov and served it at 16:38, so one failure
     gets one retry after a pause. The message says what happened in plain words, not yt-dlp's --cookies advice."""
+    url = check_link(url)
+    site = next((name for k, name in SITES.items() if k in url.lower()), "That site")
+    no_video = f"That {site} post has no video in it. Lens needs a clip." if site != "That site" else \
+        "There's no video at that link. Lens needs a clip."
+    if "tiktok.com" in url and "/photo/" in url:  # a TikTok slideshow
+        raise RuntimeError(no_video)
     cmd = ["yt-dlp", "-q", "--no-playlist", "-f", "b[height<=720]/bv*[height<=720]+ba/b", "--download-sections",
            "*0-180", "--merge-output-format", "mp4", "-o", out, url]
     for attempt in range(2):
@@ -182,9 +222,10 @@ def fetch(url: str, out: str) -> str:
         last = (r.stderr.strip().splitlines() or [""])[-1]
         if "Unsupported URL" in last or "is not a valid URL" in last:
             raise RuntimeError("Lens can't read videos from that site. Download the clip and upload it instead.")
+        if re.search(r"no video|no media|not contain any video", last, re.I):
+            raise RuntimeError(no_video)
         if attempt == 0:
             time.sleep(4)
-    site = next((name for k, name in SITES.items() if k in url.lower()), "That site")
     print(f"fetch failed: {url} :: {last[:300]}", flush=True)  # the Space logs keep yt-dlp's own words
     raise RuntimeError(f"{site} didn't let Lens's server fetch that video. The post may be private, or {site} "
                        "is turning servers away for now: try again in a minute, or download the clip and upload it.")
@@ -197,14 +238,29 @@ def duration(path: str) -> float:
     except ValueError:
         return 0.0
 
+UNREADABLE = "Lens couldn't read a video in that file. Try an MP4 or MOV clip."
+
+def has_video(path: str) -> bool:
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=codec_type",
+                          "-of", "csv=p=0", path], capture_output=True, text=True).stdout
+    return "video" in out
+
 def normalise(src: str, out: str) -> str:
     """Use the upload as it is: ffmpeg reads phone formats (mov, webm) directly, and re-encoding a filmed screen
     blurred it enough to lose Resident Evil 4 from the top 10 (1 Nov). Only a file with no readable duration
-    (some in-browser camera recordings) is rewritten, near-lossless, so frames can be spread over it."""
+    (some in-browser camera recordings) is rewritten, near-lossless, so frames can be spread over it.
+    An empty, broken or audio-only file stops here with a plain message, not ffmpeg's command line (3 Nov)."""
+    if not has_video(src):
+        raise RuntimeError(UNREADABLE)
     if duration(src) > 0:
         return src
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-t", "180", "-c:v", "libx264", "-preset", "veryfast",
-                    "-crf", "16", "-c:a", "aac", "-b:a", "96k", out], check=True)
+    # libx264 needs even sides, and a tab or camera recording can be 691x325 (3 Nov: the run died here)
+    r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-t", "180", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-b:a", "96k", out], capture_output=True, text=True)
+    if r.returncode != 0 or duration(out) <= 0:
+        print(f"normalise failed: {r.stderr.strip()[-300:]}", flush=True)
+        raise RuntimeError(UNREADABLE)
     return out
 
 def cpu_embed(ims: list) -> np.ndarray:
@@ -242,7 +298,7 @@ def identify(clip: str, work: str, embed=cpu_embed):
     ms["sam"] = int((time.time() - t) * 1000); t = time.time()
 
     query = embed(crops) if crops else full
-    ranked = index.rank(query)
+    ranked = [(g, s) for g, s in index.rank(query, top=40) if g not in state["adult"]][:10]
     evidence = {g: index.evidence(query, g) for g, _ in ranked}
     items = []
     for g, score in ranked:
@@ -261,20 +317,42 @@ def identify(clip: str, work: str, embed=cpu_embed):
     screen = [thumb(c, 480) for c in crops]
     # 2 tries of <= 100 s: the web route that streams this to the browser is cut off at 300 s, and a run cut off
     # mid-call left the page sitting on step 4 with no answer and no error (3 Nov).
-    res = call(build_request(small.result(), cands, "first", screen=screen), os.environ["MODEL_API_KEY"],
-               tries=2, read_timeout=100)
+    try:
+        res = call(build_request(small.result(), cands, "first", screen=screen), os.environ["MODEL_API_KEY"],
+                   tries=2, read_timeout=100)
+    except Exception as e:  # the visitor gets plain words; the Space log keeps the API's own
+        print(f"spark failed: {str(e)[:300]}", flush=True)
+        raise RuntimeError("Muse Spark didn't answer this time. Try again in a minute.") from e
     pool.shutdown(wait=False)
     usd = 0.01 + res["usd"]  # one SAM video call (50-frame minimum) + Muse Spark
+    if res.get("error"):
+        print(f"spark gave no answer: {res['error']}", flush=True)
     a = tidy(res["answer"] or {})
     pick = a.get("pick")
     game = items[LABELS.index(pick)] if pick and pick != "none" and LABELS.index(pick) < len(items) else None
+    if game:
+        game = {k: game[k] for k in ("id", "title", "year", "shots")}
+        # Spark picks a candidate when its own answer is the same game, and the candidate can be another edition of it:
+        # own answer "PUBG: Battlegrounds" (high), pick "PUBG Lite" (3 Nov). Name the edition it recognised. Same-title
+        # remakes are left alone: the screenshots can't tell the three Resident Evil 4s apart.
+        own = a.get("own_guess") or ""
+        family = set(index.members(game["id"]))
+        if title_key(own) != title_key(game["title"]) and (ed := next(
+                (g for g in named_games(own) if g["igdb_id"] in family and g["igdb_id"] != game["id"]), None)):
+            shots = index.evidence(query, ed["igdb_id"]) if ed["igdb_id"] in state["indexed"] else []
+            game = {"id": ed["igdb_id"], "title": ed["title"], "year": (ed.get("release_date") or "")[:4] or None,
+                    "shots": [SHOT_URL.format(size="t_screenshot_med", id=s) for s in shots] or game["shots"],
+                    "candidate": game["id"]}
+            a["game_title"] = ed["title"]
     catalog = None
     if game is None and (g := lookup(a.get("game_title", ""))):
         shots = index.evidence(query, g["igdb_id"]) if g["igdb_id"] in state["indexed"] else []  # Rerouted has none
+        if g["igdb_id"] in state["adult"]:
+            shots = []
         catalog = {"id": g["igdb_id"], "title": g["title"], "year": (g.get("release_date") or "")[:4] or None,
                    "shots": [SHOT_URL.format(size="t_screenshot_med", id=s) for s in shots]}
-    yield {"stage": "answer", **a, "game": game and {k: game[k] for k in ("id", "title", "year", "shots")},
-           "catalog": catalog, "error": res.get("error")}
+    yield {"stage": "answer", **a, "game": game, "catalog": catalog,
+           "error": "no usable answer" if res.get("error") else None}
     ms["spark"] = int((time.time() - t) * 1000)
     yield {"stage": "done", "ms": ms, "usd": round(usd, 4)}
 
