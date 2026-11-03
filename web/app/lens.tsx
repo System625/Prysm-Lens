@@ -259,7 +259,9 @@ export default function Lens() {
         <section className="rounded-[28px] border border-line bg-[linear-gradient(160deg,#191311,#0d0a09_70%)] p-3 shadow-[0_30px_80px_-30px_rgba(253,80,33,0.35)] sm:p-5">
           <div className="mb-4 flex gap-1 rounded-full bg-pill p-1 text-sm" role="tablist">
             {(["upload", "link", "camera"] as const).map((t) => (
-              <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} disabled={busy}
+              <button key={t} role="tab" aria-selected={tab === t} disabled={busy}
+                // a refusal that came before any step ("That's an image") belongs to the old tab; don't carry it over
+                onClick={() => { setTab(t); setRun((r) => (r && !r.frames ? null : r)); }}
                 className={`flex-1 rounded-full px-3 py-2.5 font-extrabold transition disabled:opacity-50 ${tab === t ? "bg-fg text-[#170802]" : "text-muted hover:text-fg"}`}>
                 {t === "upload" ? "Upload" : t === "link" ? "Paste a link" : "Camera"}
               </button>
@@ -589,7 +591,8 @@ function Pipeline({ run, now, busy, preview }: { run: Run; now: number; busy: bo
     const r = el.getBoundingClientRect();
     if (kind !== "working" && r.top >= 0 && r.top < window.innerHeight * 0.5) return;  // its top is already in view
     const smooth = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    el.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+    // Refused up front (an image, a link with no video): scroll only as far as the message, keeping the input in view.
+    el.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: kind === "error" && !run.frames ? "nearest" : "start" });
   }, [kind, run.started]);
   const current = STAGES.findIndex((s) => s.key === firstPending);
 
@@ -614,9 +617,11 @@ function Pipeline({ run, now, busy, preview }: { run: Run; now: number; busy: bo
         )}
       </div>
 
-      <h2 className="px-1 pt-4 text-2xl font-black tracking-tight sm:text-3xl">How Lens got there</h2>
+      {/* A run refused before step 1 (an image, a link with no video) has no steps to show: four greyed "waiting"
+          cards under the message looked broken (3 Nov, visual pass). */}
+      {(busy || !!run.frames) && <h2 className="px-1 pt-4 text-2xl font-black tracking-tight sm:text-3xl">How Lens got there</h2>}
 
-      {STAGES.map((s, i) => {
+      {(busy || !!run.frames) && STAGES.map((s, i) => {
         const done = has[s.key];
         const active = busy && !run.error && run.uploading == null && s.key === firstPending;
         return (
@@ -745,7 +750,9 @@ function Verdict({ a, candidates }: { a: Answer; candidates: Candidate[] }) {
         <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
           <span className={`sticker sticker--${tone}`}>{(a.confidence ?? "").replace(/^./, (c) => c.toUpperCase())} confidence</span>
           <span className="font-semibold text-muted">
-            {notGame ? "Muse Spark found no gameplay to judge, only a look-alike" : fromLens ? `Confirmed against search result #${rank}` : "Muse Spark's own answer; none of the search results matched"}
+            {notGame ? "Muse Spark found no gameplay to judge, only a look-alike"
+              : fromLens ? `Confirmed against search result #${rank}${a.game!.candidate && candidates[rank - 1] ? ` (listed as ${candidates[rank - 1].title}, same game)` : ""}`
+              : "Muse Spark's own answer; none of the search results matched"}
           </span>
         </div>
         {a.evidence && (
