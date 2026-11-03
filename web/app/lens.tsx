@@ -18,12 +18,14 @@ type Answer = {
   game_title?: string;
   confidence?: string;
   evidence?: string;
-  game?: { id: number; title: string; year: string | null; shots: string[] } | null;
+  // candidate: the search result Spark picked, when its own answer named another edition of that game (PUBG Lite → PUBG)
+  game?: { id: number; title: string; year: string | null; shots: string[]; candidate?: number } | null;
   catalog?: { id: number; title: string; year: string | null; shots: string[] } | null;  // pick=none: its own answer, looked up
   prysm_id?: string;  // the game's id in the Prysm app, added by /api/identify
   error?: string | null;
 };
 type Run = {
+  uploading?: number;  // bytes, while the clip goes up to the Space (25-30 s for 3 MB on slow wifi, 3 Nov)
   frames?: string[];
   skipped?: number;
   screen?: { found: boolean; crops: string[]; error?: string | null };
@@ -70,16 +72,44 @@ function friendly(message: string) {
   if (/busy/i.test(message)) return "Lens is busy with other clips right now. Try again in a minute.";
   if (/Space metadata|Connection errored|resolve app config|space status|API info|Failed to fetch|fetch failed|NetworkError|Load failed/i.test(message))
     return "Couldn't reach the Lens service. Check your connection and try again.";
+  if (/Invalid file type/i.test(message)) return "Lens couldn't read that file as a video. Try an MP4 or MOV clip.";
+  // Anything that reads like a program talking (a command line, a stack, a status code) gets a plain sentence.
+  if (/Command '\[|Traceback|Errno|HTTP \d{3}|\{"|^An error occurred$/i.test(message)) return "Something went wrong on Lens's side. Try again, or try another clip.";
   return message;
+}
+
+const VIDEO_EXT = /\.(mp4|mov|webm|mkv|m4v|avi)$/i;
+
+// The Space accepts files by their name's extension: a valid .3gp or a file with no extension came back "Invalid file
+// type" after a full upload (3 Nov), and a PNG took 69 s to be refused. Images are turned away here, before uploading;
+// any other file goes up under a video name, since ffmpeg reads the content, not the name.
+function asVideo(f: File): File | string {
+  if (f.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|heic|avif|bmp)$/i.test(f.name))
+    return "That's an image. Lens names games from video: upload a short clip, or screen-record 5 to 10 seconds of the game.";
+  if (f.type && !f.type.startsWith("video/") && !VIDEO_EXT.test(f.name))
+    return "That isn't a video file. Upload an MP4, MOV or WebM clip.";
+  if (f.size === 0) return "That file is empty.";
+  return VIDEO_EXT.test(f.name) ? f : new File([f], f.type.includes("webm") ? "clip.webm" : "clip.mp4", { type: f.type });
+}
+
+// Share sheets copy more than the link ("Check this out! https://vt.tiktok.com/ZS…/ lol" failed, 3 Nov): take the
+// first web address in what was pasted, and add https:// to a bare "www.tiktok.com/…".
+function linkIn(text: string): string | null {
+  const t = text.trim();
+  const m = t.match(/https?:\/\/[^\s<>"']+/i);
+  if (m) return m[0].replace(/[).,!?]+$/, "");
+  return /^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\/\S*$/i.test(t) ? `https://${t}` : null;
 }
 
 async function streamSpace(input: Input, onEvent: OnEvent) {
   let path: string | undefined;
   if (input.file) {
     const app = await connect();
+    onEvent({ stage: "uploading", bytes: input.file.size });
     const up = await app.upload_files(app.config!.root, [input.file]);
-    if (up.error || !up.files?.[0]) throw new Error(`Upload failed: ${up.error ?? "no file path returned"}`);
+    if (up.error || !up.files?.[0]) throw new Error(`The upload didn't finish. Check your connection and try again.`);
     path = up.files[0];
+    onEvent({ stage: "uploaded" });
   }
   const res = await fetch("/api/identify", {
     method: "POST",
@@ -167,6 +197,9 @@ export default function Lens() {
         const stage = e.stage as string;
         setRun((r) => {
           if (!r) return r;
+          if (stage === "uploading") return { ...r, uploading: e.bytes as number };
+          // The steps' clocks start when the upload is done, so step 1 doesn't count the upload's seconds.
+          if (stage === "uploaded") return { ...r, uploading: undefined, at: { ...r.at, uploaded: Date.now() } };
           const at = { ...r.at, [stage]: Date.now() };
           if (stage === "frames") return { ...r, at, frames: e.frames as string[], skipped: (e.skipped as number) ?? 0 };
           if (stage === "screen") return { ...r, at, screen: e as unknown as Run["screen"] };
@@ -187,8 +220,10 @@ export default function Lens() {
     }
   }
 
-  function submitFile(f: File) {
-    if (f.size > 200e6) return setRun({ started: Date.now(), at: {}, error: "That video is over 200 MB." });
+  function submitFile(raw: File) {
+    if (raw.size > 200e6) return setRun({ started: Date.now(), at: {}, error: "That video is over 200 MB. Trim it to a short clip and try again." });
+    const f = asVideo(raw);
+    if (typeof f === "string") return setRun({ started: Date.now(), at: {}, error: f });
     go({ file: f }, URL.createObjectURL(f));
   }
 
@@ -257,7 +292,7 @@ function Upload({ disabled, onFile }: { disabled: boolean; onFile: (f: File) => 
         </svg>
       </span>
       <span className="text-lg font-extrabold">Drop a video here, or tap to choose one</span>
-      <span className="mt-1 text-sm text-faint">MP4, MOV or WebM, up to 200 MB. Only the first 3 minutes are used.</span>
+      <span className="mt-1 text-sm text-faint">MP4, MOV or WebM, up to 200 MB. A 10 to 60 second clip works best.</span>
       <input type="file" accept="video/*" className="hidden" disabled={disabled}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
     </label>
@@ -266,15 +301,23 @@ function Upload({ disabled, onFile }: { disabled: boolean; onFile: (f: File) => 
 
 function Link({ disabled, onUrl, onFile }: { disabled: boolean; onUrl: (u: string) => void; onFile: (f: File) => void }) {
   const [url, setUrl] = useState("");
-  const yt = youTubeVideo(url);
+  const [bad, setBad] = useState(false);
+  const link = linkIn(url);
+  const yt = link ? youTubeVideo(link) : null;
   return (
     <div className="flex flex-col gap-3 p-1">
-      <form className="flex flex-col gap-3 sm:flex-row" onSubmit={(e) => { e.preventDefault(); if (url.trim() && !yt) onUrl(url.trim()); }}>
-        <input value={url} onChange={(e) => setUrl(e.target.value)} disabled={disabled} inputMode="url"
+      <form className="flex flex-col gap-3 sm:flex-row" onSubmit={(e) => {
+        e.preventDefault();
+        if (!url.trim() || yt) return;
+        if (!link) return setBad(true);
+        onUrl(link);
+      }}>
+        <input value={url} onChange={(e) => { setUrl(e.target.value); setBad(false); }} disabled={disabled} inputMode="url"
           placeholder="https://www.instagram.com/reel/..."
           className="min-h-[52px] min-w-0 flex-1 rounded-[14px] border-2 border-white/10 bg-black/40 px-4 font-semibold outline-none placeholder:text-white/35 focus:border-accent" />
         {!yt && <button disabled={disabled || !url.trim()} className="btn">Identify</button>}
       </form>
+      {bad && <p className="text-sm font-semibold text-bad">That isn&apos;t a link. Copy the post&apos;s link (it starts with https://) and paste it here.</p>}
       {yt ? <YouTube key={yt.id ?? "none"} video={yt} disabled={disabled} onFile={onFile} />
         : <p className="text-xs text-faint">Works with TikTok, Instagram, X and Facebook. YouTube takes one extra step.</p>}
     </div>
@@ -463,17 +506,25 @@ function Camera({ disabled, onClip }: { disabled: boolean; onClip: (f: File) => 
   const [err, setErr] = useState<string | null>(null);
   const SECONDS = 8;
 
-  useEffect(() => () => streamRef.current?.getTracks().forEach((t) => t.stop()), []);
+  const alive = useRef(true);  // leaving the tab mid-recording stops the camera; that half clip isn't sent
+  useEffect(() => () => { alive.current = false; streamRef.current?.getTracks().forEach((t) => t.stop()); }, []);
 
   async function start() {
     setErr(null);
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", height: { ideal: 720 } }, audio: true });
+      const cam = { facingMode: "environment", height: { ideal: 720 } };
+      // Sound helps (a streamer saying the name), but a visitor who blocks the microphone should still get the camera.
+      const s = await navigator.mediaDevices.getUserMedia({ video: cam, audio: true })
+        .catch(() => navigator.mediaDevices.getUserMedia({ video: cam, audio: false }));
       streamRef.current = s;
       if (video.current) { video.current.srcObject = s; await video.current.play(); }
       setState("live");
     } catch (e) {
-      setErr(`Camera unavailable: ${(e as Error).message}`);
+      const name = (e as Error).name;
+      setErr(name === "NotAllowedError" ? "Lens needs camera access. Allow the camera for this site in your browser, then try again."
+        : name === "NotFoundError" ? "No camera found on this device. Upload a clip instead."
+        : !navigator.mediaDevices ? "This browser can't open the camera here. Upload a clip instead."
+        : `Camera unavailable: ${(e as Error).message}`);
     }
   }
 
@@ -488,6 +539,7 @@ function Camera({ disabled, onClip }: { disabled: boolean; onClip: (f: File) => 
       const blob = new Blob(parts, { type: rec.mimeType || "video/webm" });
       const ext = blob.type.includes("mp4") ? "mp4" : "webm";
       s.getTracks().forEach((t) => t.stop());
+      if (!alive.current) return;
       setState("off");
       onClip(new File([blob], `camera.${ext}`, { type: blob.type }));
     };
@@ -523,7 +575,7 @@ function Camera({ disabled, onClip }: { disabled: boolean; onClip: (f: File) => 
 function Pipeline({ run, now, busy, preview }: { run: Run; now: number; busy: boolean; preview: string | null }) {
   const has: Record<string, boolean> = { frames: !!run.frames, screen: !!run.screen, candidates: !!run.candidates, answer: !!run.answer };
   const firstPending = STAGES.find((s) => !has[s.key])?.key;
-  const prevAt = (i: number) => (i === 0 ? run.started : run.at[STAGES[i - 1].key] ?? run.started);
+  const prevAt = (i: number) => (i === 0 ? run.at.uploaded ?? run.started : run.at[STAGES[i - 1].key] ?? run.started);
   const seconds = (i: number) => (((run.at[STAGES[i].key] ?? now) - prevAt(i)) / 1000).toFixed(1);
 
   // The answer lands at the top, but people scroll down to watch the frames and never saw it (user, 1 Nov). So the top
@@ -548,11 +600,13 @@ function Pipeline({ run, now, busy, preview }: { run: Run; now: number; busy: bo
         {run.error && <div className="rounded-[20px] border-2 border-bad/50 bg-bad/10 p-4 text-sm font-semibold">{run.error}</div>}
         {kind === "working" && current >= 0 && (
           <div className="rise flex items-center gap-4 rounded-[28px] border-2 border-dashed border-accent/50 bg-accent-soft p-5 sm:p-6">
-            <span className="step-num pulse !h-12 !w-12 text-lg">{STAGES[current].n}</span>
+            <span className="step-num pulse !h-12 !w-12 text-lg">{run.uploading != null ? "↑" : STAGES[current].n}</span>
             <div className="min-w-0 flex-1">
-              <p className="text-xl font-black sm:text-2xl">Working it out…</p>
+              <p className="text-xl font-black sm:text-2xl">{run.uploading != null ? "Uploading your clip…" : "Working it out…"}</p>
               <p className="mt-0.5 text-sm text-muted">
-                Step {STAGES[current].n} of {STAGES.length}: {STAGES[current].name} ({STAGES[current].model}). The answer appears here.
+                {run.uploading != null
+                  ? `${(run.uploading / 1e6).toFixed(1)} MB. Lens starts as soon as it's up; a big phone video can take a while on slow wifi.`
+                  : `Step ${STAGES[current].n} of ${STAGES.length}: ${STAGES[current].name} (${STAGES[current].model}). The answer appears here.`}
               </p>
             </div>
             <span className="rounded-full bg-pill px-2.5 py-1 font-mono text-xs text-muted">{((now - run.started) / 1000).toFixed(0)}s</span>
@@ -564,7 +618,7 @@ function Pipeline({ run, now, busy, preview }: { run: Run; now: number; busy: bo
 
       {STAGES.map((s, i) => {
         const done = has[s.key];
-        const active = busy && !run.error && s.key === firstPending;
+        const active = busy && !run.error && run.uploading == null && s.key === firstPending;
         return (
           <div key={s.key}
             className={`rounded-3xl border bg-panel p-4 transition sm:p-5 ${active ? "border-accent/60 shadow-[0_0_0_4px_rgba(253,80,33,0.12)]" : "border-line"} ${!done && !active ? "opacity-50" : ""}`}>
@@ -620,12 +674,12 @@ function body(key: string, run: Run, preview: string | null) {
       </div>
     ) : (
       <p className="text-sm text-muted">
-        {run.screen.error ? `SAM 3.1 didn't answer (${run.screen.error}); searching the full frames.` : "No filmed screen: this is direct gameplay, so Lens searches the full frames."}
+        {run.screen.error ? "SAM 3.1 didn't answer this time, so Lens searches the full frames." : "No filmed screen: this is direct gameplay, so Lens searches the full frames."}
       </p>
     );
   if (key === "candidates" && run.candidates) {
     const max = Math.max(...run.candidates.map((c) => c.score), 0.001);
-    const picked = run.answer?.game?.id;
+    const picked = run.answer?.game?.candidate ?? run.answer?.game?.id;
     return (
       <ol className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         {run.candidates.map((c, i) => (
@@ -666,10 +720,10 @@ function body(key: string, run: Run, preview: string | null) {
 }
 
 function Verdict({ a, candidates }: { a: Answer; candidates: Candidate[] }) {
-  if (!a.game_title) return <div className="rounded-[28px] border border-line bg-panel p-6 font-semibold text-muted">Muse Spark couldn&apos;t give an answer{a.error ? `: ${a.error}` : "."}</div>;
+  if (!a.game_title) return <div className="rounded-[28px] border border-line bg-panel p-6 font-semibold text-muted">Muse Spark couldn&apos;t settle on an answer for this clip. Try again, or try a longer clip of the gameplay.</div>;
   const tone = a.confidence === "high" ? "orange" : a.confidence === "medium" ? "gold" : "rose";
   const fromLens = !!a.game;
-  const rank = fromLens ? candidates.findIndex((c) => c.id === a.game!.id) + 1 : 0;
+  const rank = fromLens ? candidates.findIndex((c) => c.id === (a.game!.candidate ?? a.game!.id)) + 1 : 0;
   const cat = fromLens ? null : a.catalog;
   const shots = a.game?.shots ?? cat?.shots ?? [];
   // No gameplay, and Muse Spark is only guessing. A high-confidence answer stays an answer: a Wolverine PS5 unboxing
@@ -683,7 +737,7 @@ function Verdict({ a, candidates }: { a: Answer; candidates: Candidate[] }) {
         <p className="text-base font-black text-gold sm:text-lg">
           {notGame ? "No gameplay in this clip. Closest game:" : a.confidence === "high" ? "This is" : a.confidence === "medium" ? "Most likely" : "Best guess, not sure"}
         </p>
-        <h2 className="mt-1 text-4xl font-black leading-[1.02] tracking-tight text-white sm:text-6xl">
+        <h2 className="mt-1 text-4xl font-black leading-[1.02] tracking-tight text-white [overflow-wrap:anywhere] sm:text-6xl">
           {/* Muse Spark sometimes ends the title with the year ("... Breakpoint (2019)"); the year is shown beside it anyway. */}
           {(a.game ?? cat)?.year ? a.game_title.replace(new RegExp(`\\s*\\(${(a.game ?? cat)!.year}\\)$`), "") : a.game_title}
           {(a.game ?? cat)?.year && <span className="ml-3 text-2xl font-extrabold text-white/40 sm:text-3xl">{(a.game ?? cat)!.year}</span>}
