@@ -125,14 +125,16 @@ def build_request(clip: str, candidates: list[dict], mode: str = "video", frames
                                 "schema": SCHEMA_FIRST if mode == "first" else SCHEMA}},
             "reasoning": {"effort": effort}, "max_output_tokens": max_output_tokens}
 
-def call(body: dict, key: str, tries: int = 4) -> dict:
+def call(body: dict, key: str, tries: int = 4, read_timeout: int = 150) -> dict:
     """POST to the Responses API; retries 429/5xx, timeouts and dropped connections with backoff (a call normally
-    answers in 6-20 s; one hung past 300 s on 30 Oct). Returns {answer, usage, usd, ms, response_id};
+    answers in 6-20 s; one hung past 300 s on 30 Oct; 565 benchmark calls: median 14 s, p99 63 s, slowest 97 s).
+    The live demo passes fewer tries and a shorter read timeout, so it answers or fails inside the web route's
+    300 s. Returns {answer, usage, usd, ms, response_id};
     answer is None (and error set) when the model ran but gave no usable answer, so its cost is still counted."""
     for attempt in range(tries):
         t0 = time.time()
         try:
-            r = requests.post(API, json=body, headers={"Authorization": f"Bearer {key}"}, timeout=(20, 150))
+            r = requests.post(API, json=body, headers={"Authorization": f"Bearer {key}"}, timeout=(20, read_timeout))
         except (requests.Timeout, requests.ConnectionError) as e:
             if attempt == tries - 1:
                 raise RuntimeError(f"{type(e).__name__} after {tries} tries") from e

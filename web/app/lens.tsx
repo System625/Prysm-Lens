@@ -174,6 +174,9 @@ export default function Lens() {
           return r;
         });
       });
+      // The stream can end with neither: the 300 s route limit, or a phone dropping the connection. Say so instead
+      // of leaving the page on step 4 (3 Nov).
+      setRun((r) => r && !r.answer && !r.error ? { ...r, error: "Lens stopped before it answered. Try again." } : r);
     } catch (err) {
       setRun((r) => r && { ...r, error: friendly((err as Error).message) });
     } finally {

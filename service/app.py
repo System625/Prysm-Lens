@@ -22,6 +22,7 @@ LENS_INDEX (index base name, default index-q8), LENS_DAILY_CAP (identify calls p
 each costs about $0.03 of Meta credit, so a public demo can't drain it).
 """
 import base64, io, json, os, re, subprocess, tempfile, threading, time, unicodedata
+import requests
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import numpy as np, torch
@@ -87,6 +88,14 @@ def title_key(t: str) -> str:
     t = re.sub(r"\((19|20)\d\d\)", " ", t)  # "Elden Ring (2022)"
     return re.sub(r"^the ", "", re.sub(r"[^a-z0-9]+", " ", t).strip())
 
+NUMBERS = "zero one two three four five six seven eight nine ten".split()
+
+def swap_numbers(t: str) -> str:
+    """Spelled-out numbers as digits and digits as words, whole words only: "Phantom Blade 0" <-> "Phantom Blade Zero"."""
+    return re.sub(r"\b(\d+|[a-z]+)\b", lambda m: (NUMBERS[int(m[1])] if m[1].isdigit() and int(m[1]) <= 10 else
+                                                str(NUMBERS.index(m[1].lower())) if m[1].lower() in NUMBERS else m[1]),
+                  t, flags=re.I)
+
 NOT_A_TITLE = re.compile(r"^\s*(unknown|unidentified|unclear|none|n/a|not\b|no\b)", re.I)
 
 def lookup(title: str) -> dict | None:
@@ -99,6 +108,7 @@ def lookup(title: str) -> dict | None:
         return None
     tries = (title, re.sub(r"\([^)]*\)", " ", title), title.split(" / ")[0],  # "(Shutoko mod)", "A / B"
              re.sub(r"\s+(remake|remastered|remaster)\b.*$", "", title, flags=re.I))
+    tries += tuple(swap_numbers(t) for t in tries)  # Spark wrote "Phantom Blade 0" in 5 of 5 runs on row 51
     named = next((state["titles"][k] for k in map(title_key, tries) if k and k in state["titles"]), [])
     if not named:
         return None
@@ -118,6 +128,21 @@ def allow() -> bool:
         return False
     state["count"] += 1
     return True
+
+def inline(urls: list[str], pool: ThreadPoolExecutor) -> list[str]:
+    """IGDB screenshots as data URLs, fetched here. Sent as URLs, Meta's servers fetch them, and one they couldn't
+    fetch failed the whole answer ("media_url_not_fetchable ... input[0].content[15]", a candidate's screenshot,
+    3 Nov); the same clip worked on a rerun. ~10 KB each at t_logo_med, ~30 a run. One that fails here is left out."""
+    def get(u: str) -> str | None:
+        for _ in range(2):
+            try:
+                r = requests.get(u, timeout=8)
+                if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/"):
+                    return "data:image/jpeg;base64," + base64.b64encode(r.content).decode()
+            except requests.RequestException:
+                pass
+        return None
+    return [d for d in pool.map(get, urls) if d]
 
 def thumb(im: Image.Image, h: int = 240) -> str:
     im = im.convert("RGB")
@@ -199,11 +224,16 @@ def identify(clip: str, work: str, embed=cpu_embed):
     yield {"stage": "candidates", "items": items}
     ms["search"] = int((time.time() - t) * 1000); t = time.time()
 
-    cands = [{"title": c["title"], "year": c["year"],
-              "shots": [SHOT_URL.format(size="t_logo_med", id=s) for s in evidence[c["id"]]]} for c in items]
+    with ThreadPoolExecutor(16) as fetchers:
+        cands = [{"title": c["title"], "year": c["year"],
+                  "shots": inline([SHOT_URL.format(size="t_logo_med", id=s) for s in evidence[c["id"]]], fetchers)}
+                 for c in items]
     # A filmed screen: Muse Spark also gets SAM's crops, or it judges a room with a small monitor in it.
     screen = [thumb(c, 480) for c in crops]
-    res = call(build_request(small.result(), cands, "first", screen=screen), os.environ["MODEL_API_KEY"])
+    # 2 tries of <= 100 s: the web route that streams this to the browser is cut off at 300 s, and a run cut off
+    # mid-call left the page sitting on step 4 with no answer and no error (3 Nov).
+    res = call(build_request(small.result(), cands, "first", screen=screen), os.environ["MODEL_API_KEY"],
+               tries=2, read_timeout=100)
     pool.shutdown(wait=False)
     usd = 0.01 + res["usd"]  # one SAM video call (50-frame minimum) + Muse Spark
     a = res["answer"] or {}

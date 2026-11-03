@@ -54,18 +54,25 @@ export async function POST(req: Request) {
         const video = file ? { path: file, orig_name: typeof name === "string" ? name : undefined, meta: { _type: "gradio.FileData" } } : null;
         const job = app.submit("/identify", { video, url: link });
         let seen = 0;
+        let ended = false;  // an answer or an error went out
         for await (const msg of job) {
           if (msg.type === "data") {
             const events = (msg.data as unknown[])[0] as unknown[];  // the list so far; send only new ones
-            for (const e of events.slice(seen)) send(await withPrysmId(e));
+            for (const e of events.slice(seen)) {
+              const stage = (e as { stage?: string })?.stage;
+              if (stage === "answer" || stage === "error") ended = true;
+              send(await withPrysmId(e));
+            }
             seen = events.length;
           } else if (msg.type === "status" && msg.stage === "error") {
             send({ stage: "error", message: typeof msg.message === "string" && msg.message ? msg.message : "The Space returned an error." });
+            ended = true;
             break;
           } else if (msg.type === "status" && msg.stage === "complete") {
             break;
           }
         }
+        if (!ended) send({ stage: "error", message: "Lens stopped before it answered. Try again." });
       } catch (err) {
         send({ stage: "error", message: (err as Error).message || "Couldn't reach the Space." });
       } finally {
