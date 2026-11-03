@@ -151,14 +151,28 @@ def thumb(im: Image.Image, h: int = 240) -> str:
     im.save(buf, "JPEG", quality=70)
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
+SITES = {"instagram": "Instagram", "tiktok": "TikTok", "facebook": "Facebook", "fb.watch": "Facebook", "x.com": "X",
+         "twitter": "X", "youtu": "YouTube", "reddit": "Reddit", "twitch": "Twitch"}
+
 def fetch(url: str, out: str) -> str:
-    """A shared post's video via yt-dlp (first 3 minutes, <= 720p). Some sites block data-centre IPs: upload instead."""
-    r = subprocess.run(["yt-dlp", "-q", "--no-playlist", "-f", "b[height<=720]/bv*[height<=720]+ba/b", "--download-sections",
-                        "*0-180", "--merge-output-format", "mp4", "-o", out, url], capture_output=True, text=True, timeout=150)
-    if r.returncode != 0 or not os.path.exists(out):
-        raise RuntimeError("Couldn't fetch that link from the server (the site may block it). Upload the clip instead. "
-                           + (r.stderr.strip().splitlines() or [""])[-1][:200])
-    return out
+    """A shared post's video via yt-dlp (first 3 minutes, <= 720p). Some sites refuse data-centre IPs now and then:
+    Instagram answered "empty media response" for a reel at 16:37 on 3 Nov and served it at 16:38, so one failure
+    gets one retry after a pause. The message says what happened in plain words, not yt-dlp's --cookies advice."""
+    cmd = ["yt-dlp", "-q", "--no-playlist", "-f", "b[height<=720]/bv*[height<=720]+ba/b", "--download-sections",
+           "*0-180", "--merge-output-format", "mp4", "-o", out, url]
+    for attempt in range(2):
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=150)
+        if r.returncode == 0 and os.path.exists(out):
+            return out
+        last = (r.stderr.strip().splitlines() or [""])[-1]
+        if "Unsupported URL" in last or "is not a valid URL" in last:
+            raise RuntimeError("Lens can't read videos from that site. Download the clip and upload it instead.")
+        if attempt == 0:
+            time.sleep(4)
+    site = next((name for k, name in SITES.items() if k in url.lower()), "That site")
+    print(f"fetch failed: {url} :: {last[:300]}", flush=True)  # the Space logs keep yt-dlp's own words
+    raise RuntimeError(f"{site} didn't let Lens's server fetch that video. The post may be private, or {site} "
+                       "is turning servers away for now: try again in a minute, or download the clip and upload it.")
 
 def duration(path: str) -> float:
     out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
