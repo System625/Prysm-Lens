@@ -45,14 +45,15 @@ def gpu_embed(batch: torch.Tensor):
 
 def embed(ims: list) -> np.ndarray:
     q, idx, vals = gpu_embed(torch.stack([preprocess(v) for v in ims]))
-    _neighbours[key(q)] = list(zip(idx, vals))
-    while len(_neighbours) > 16:  # a filmed-screen run searches its crops, so its full-frame result is never read
+    for row, i, v in zip(q, idx, vals):  # per view: the search may use only some rows (drop_webcam)
+        _neighbours[key(row)] = (i, v)
+    while len(_neighbours) > 1024:  # a filmed-screen run searches its crops, so its full-frame rows are never read
         _neighbours.pop(next(iter(_neighbours)))
     return q
 
 def neighbours(q: np.ndarray, k: int):
-    got = _neighbours.pop(key(q), None)
-    if got is None or k != K:  # not from embed(): fall back to the CPU search
+    got = [_neighbours.get(key(row)) for row in q]
+    if k != K or any(g is None for g in got):  # not from embed(): fall back to the CPU search
         return type(index).neighbours(index, q, k)
     return got
 

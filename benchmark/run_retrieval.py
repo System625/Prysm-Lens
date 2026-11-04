@@ -11,7 +11,7 @@ import numpy as np, torch
 from PIL import Image
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from indexer.embed import load_model, encode
-from service.search import Index, extract_frames, keep_frames, views
+from service.search import Index, extract_frames, keep_frames, search_rows, views
 from service.screen import crop_to_screen, find_screen
 
 SCREEN = os.environ.get("LENS_SCREEN") == "1"  # SAM 3.1 screen crop for filmed-screen clips (service/screen.py)
@@ -52,13 +52,15 @@ def main(tsv: str, baseline: str, index_base: str, out: str, games_path: str = "
         keep = keep_frames(frames)  # flat frames (outros, fades) out, as the service does
         boxes = find_screen(frames, f"data/sam/{row}.json", keep) if SCREEN else {}
         frames = [frames[i] for i in keep]
-        tag = ("screen-boxed" if boxes else "views") + ("-kept" if len(keep) < 16 else "")
+        tag = ("screen-boxed" if boxes else "views4") + ("-kept" if len(keep) < 16 else "")
         cached = f"data/query-emb/{row}-{tag}.npy"
         if os.path.exists(cached):
             query = np.load(cached)
         else:
-            ims = crop_to_screen(frames, boxes) if boxes else [v for f in frames for v in views(Image.open(f))]
-            query = encode(model, torch.stack([preprocess(v) for v in ims]))
+            per_frame = [crop_to_screen(frames, boxes)] if boxes else [views(Image.open(f)) for f in frames]
+            query = encode(model, torch.stack([preprocess(v) for vs in per_frame for v in vs]))
+            if not boxes:  # as the service: drop webcam bands of split portrait frames
+                query = search_rows(query, [len(vs) for vs in per_frame])
             os.makedirs("data/query-emb", exist_ok=True)
             np.save(cached, query)
         ranked = index.rank(query)

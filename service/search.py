@@ -47,15 +47,47 @@ def trim_bars(img: Image.Image, thresh: int = 16) -> Image.Image:
     return img.crop((cols[0], rows[0], cols[-1] + 1, rows[-1] + 1))
 
 def views(img: Image.Image) -> list[Image.Image]:
-    """The bar-trimmed frame, plus its centre 16:9 band when it is portrait (vertical video with gameplay in the middle)."""
+    """The bar-trimmed frame, plus, when it is portrait, its centre, top and bottom 16:9 bands (in that order).
+    Vertical video puts gameplay in the middle, or a streamer's webcam over the game: search_rows picks which to use."""
     img = trim_bars(img.convert("RGB"))
     out = [img]
     w, h = img.size
     if h > w:
         bh = int(w * 9 / 16)
         top = (h - bh) // 2
-        out.append(img.crop((0, top, w, top + bh)))
+        out += [img.crop((0, top, w, top + bh)), img.crop((0, 0, w, bh)), img.crop((0, h - bh, w, h))]
     return out
+
+# Perception Encoder text embeddings of two webcam prompts and two gameplay prompts (texts inside the file).
+_prompts = json.load(open(os.path.join(os.path.dirname(__file__), "webcam-prompts.json")))
+WEBCAM, GAME = (np.array(_prompts[k], dtype=np.float32) for k in ("webcam", "game"))
+WEBCAM_LIMIT = 0.04
+
+def webcam_score(q: np.ndarray) -> np.ndarray:
+    """Per view: how much more it looks like a streamer's webcam than a game. Face bands ~+0.08, gameplay below 0."""
+    q = q.astype(np.float32)
+    return (q @ WEBCAM.T).max(1) - (q @ GAME.T).max(1)
+
+def search_rows(query: np.ndarray, counts: list[int]) -> np.ndarray:
+    """The views to search, from views()' embeddings (counts = views per frame). Landscape frames: the frame.
+    Portrait frames: the frame and its centre band, as before, unless it is split into a webcam over (or under)
+    the game; then only the bands that aren't webcam. A TikTok with the streamer's face over Fears to Fathom (4 Nov
+    phone test) filled the top 10 with live-action FMV games, whose screenshots are people in rooms: the truth was #10,
+    #3 searching the game band alone. Splitting only when a frame is clearly split, not adding the bands to every
+    portrait frame, is what the 104-clip benchmark allows: R@10 76 -> 77, R@1 and every other clip unchanged
+    (bands everywhere: R@1 47 -> 45)."""
+    s, rows, i = webcam_score(query), [], 0
+    for n in counts:
+        if n == 4:
+            full, mid, top, bot = range(i, i + 4)
+            if max(s[top], s[bot]) > WEBCAM_LIMIT >= min(s[top], s[bot]):
+                rows += [r for r in (top, bot, mid) if s[r] <= WEBCAM_LIMIT]
+            else:
+                rows += [full, mid]
+        else:
+            rows += list(range(i, i + n))
+        i += n
+    return query[rows]
 
 HUB_WEIGHT = 0.5  # similarity minus this times the screenshot's hub score
 PRIOR_WEIGHT = 0.4  # vote share times 1 + this * log(1 + IGDB total_rating_count)

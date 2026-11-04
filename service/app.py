@@ -33,7 +33,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from PIL import Image
 
 from indexer.embed import load_model, encode
-from service.search import Index, extract_frames, keep_frames, views
+from service.search import Index, extract_frames, keep_frames, search_rows, views
 from service.screen import crop_to_screen, find_screen
 from service.verify import build_request, call, prepare_clip, LABELS
 
@@ -286,7 +286,8 @@ def identify(clip: str, work: str, embed=cpu_embed):
 
     # SAM is a network call: fingerprint the full frames while it runs, and redo only if it finds a filmed screen.
     sam = pool.submit(find_screen, every, f"{work}/sam.json", keep)
-    full = embed([v for f in frames for v in views(Image.open(f))])
+    per_frame = [views(Image.open(f)) for f in frames]
+    full = search_rows(embed([v for vs in per_frame for v in vs]), [len(vs) for vs in per_frame])
     sam_error = None
     try:
         boxes = sam.result(timeout=90)
