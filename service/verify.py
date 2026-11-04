@@ -38,8 +38,9 @@ SCHEMA = {
     "properties": {
         "gameplay": {"type": "boolean",
                      "description": "false when no gameplay is on screen: a film, TV show, real-world footage, an AI-generated "
-                                    "video that only looks like a game, an unboxing or a facecam alone. game_title is then the "
-                                    "game it is about, or the one it most resembles."},
+                                    "video that only looks like a game, an unboxing, a facecam alone, a meme or skit filmed in a "
+                                    "room, or a screen showing a website, app, charts or code. game_title is then the game it is "
+                                    "about, or the one it most resembles."},
         "pick": {"type": "string", "enum": [*LABELS, "none"],
                  "description": "The letter of the matching candidate, or none if no candidate is the game in the clip."},
         "game_title": {"type": "string",
@@ -67,8 +68,9 @@ game's name: never use it as evidence. Text that belongs to the game or its trai
 Sequels, remasters and mobile ports often look alike: compare the HUD, menus, characters and art style, not only the genre.
 It is {date.today().year}, and many recent games will be new to you: a clip that looks like a game you know may be one you
 don't. Never name a game you can't see evidence for. If unsure, say so with low confidence.
-Some clips are not games at all (film scenes, real streets, AI-generated video): set gameplay to false, still name the
-game it looks most like, and keep the title field to the name alone."""
+Some clips are not games at all (film scenes, real streets, AI-generated video, memes and skits of people at a desk, a
+screen showing an app or a website): set gameplay to false, still name the game it looks most like, and keep the title field
+to the name alone. A computer, desk setup or gaming chair in the room is not gameplay."""
 
 def prepare_clip(clip: str, out: str, seconds: int = CLIP_SECONDS, height: int = CLIP_HEIGHT) -> str:
     """Up to `seconds` of the clip from 5% in, scaled to at most `height` lines, audio kept. Cached at `out`.
@@ -117,9 +119,13 @@ def build_request(clip: str, candidates: list[dict], mode: str = "video", frames
     else:
         content.append({"type": "input_video", "video_url": data_url(clip, "video/mp4")})
     if screen:
-        content.append({"type": "input_text", "text": "The clip films a monitor or TV. These stills are that screen, cut "
-                                                      "out of the clip so the gameplay is easier to see; judge the game from "
-                                                      "them, not from the room around it:"})
+        # 4 Nov phone test: a meme reel of two people at a desk, the monitor showing stock charts, came back as Coin
+        # Trader Simulator (medium): "judge the game from them" told Spark there was a game on that screen.
+        content.append({"type": "input_text", "text": "The clip films a monitor, TV or phone screen. These stills are that "
+                                                      "screen, cut out of the clip so it is easier to see. If a game is on it, "
+                                                      "judge the game from them, not from the room around it. A screen can also "
+                                                      "show something that is not a game (a website, an app, charts, code, a "
+                                                      "video call): then gameplay is false:"})
         content += [image(s) for s in spread(screen, SCREEN_SHOTS)]
     if mode == "first":
         content.append({"type": "input_text", "text": "Step 1: before reading anything below, decide which game the clip "
