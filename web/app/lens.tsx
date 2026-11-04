@@ -784,8 +784,24 @@ const PLAY_STORE = "https://play.google.com/store/apps/details?id=com.prysmblast
 
 // Saving needs an account, and Prysm already has them: the app opens prysm://game/<id> on that game's page (the link its
 // home-screen widgets use), where it goes into the library in one tap. Computers can't open the app, so they get the stores.
+// A bare prysm:// link does nothing on a phone without the app (4 Nov phone test), so Android gets an intent:// link that
+// names the package (Chrome opens Google Play when it isn't installed) and iPhones go to the App Store if the page is
+// still showing a moment after the tap.
 function SaveToPrysm({ id }: { id: string }) {
-  const phone = typeof navigator !== "undefined" && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  const android = /Android/i.test(ua);
+  const phone = android || /iPhone|iPad|iPod/i.test(ua);
+  const path = `game/${encodeURIComponent(id)}`;
+  const href = android
+    ? `intent://${path}#Intent;scheme=prysm;package=com.prysmblast.app;S.browser_fallback_url=${encodeURIComponent(PLAY_STORE)};end`
+    : `prysm://${path}`;
+  const openOrStore = () => {
+    if (android) return;  // the intent link carries its own fallback
+    const timer = setTimeout(() => { if (document.visibilityState === "visible") window.location.href = APP_STORE; }, 1500);
+    const cancel = () => clearTimeout(timer);  // the app opened and the page went to the background
+    document.addEventListener("visibilitychange", cancel, { once: true });
+    window.addEventListener("pagehide", cancel, { once: true });
+  };
   const stores = (
     <>
       <a className="font-bold text-fg underline underline-offset-2" href={APP_STORE}>App Store</a>
@@ -798,10 +814,12 @@ function SaveToPrysm({ id }: { id: string }) {
       <div className="min-w-0 flex-1">
         <p className="text-base font-black">Save it to your library</p>
         <p className="mt-0.5 text-sm text-muted">
-          {phone ? <>Opens the game in Prysm. Don&apos;t have it? {stores}</> : <>Open this page on your phone to add it in Prysm, or get the app: {stores}</>}
+          {phone
+            ? <>Opens the game in Prysm, or the store if you don&apos;t have it yet: install, sign in, then tap again. {stores}</>
+            : <>Open this page on your phone to add it in Prysm, or get the app: {stores}</>}
         </p>
       </div>
-      {phone && <a href={`prysm://game/${encodeURIComponent(id)}`} className="btn shrink-0">Open in Prysm</a>}
+      {phone && <a href={href} onClick={openOrStore} className="btn shrink-0">Open in Prysm</a>}
     </div>
   );
 }
