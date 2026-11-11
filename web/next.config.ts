@@ -10,9 +10,14 @@ const lanAddresses = Object.values(networkInterfaces())
   .filter((a) => a && a.family === "IPv4" && !a.internal)
   .map((a) => a!.address);
 
+// Lens moved to Prysm's own site on 11 Nov 2026. This deployment only redirects: the Devpost entry, the demo video
+// and the README link here, so every path (the API included) lands on the new page. Code history stays in git.
 const config: NextConfig = {
   images: { remotePatterns: [{ protocol: "https", hostname: "images.igdb.com" }] },
   allowedDevOrigins: lanAddresses,
+  async redirects() {
+    return [{ source: "/:path*", destination: "https://www.prysmblast.com/lens", permanent: true }];
+  },
 };
 
 export default config;
